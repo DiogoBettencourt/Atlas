@@ -50,7 +50,7 @@ endif()
 # ------------------------------------------------------------------------------
 
 # Gather source files
-file(GLOB_RECURSE ATLAS_SOURCES "src/core/*.cpp" "src/storage/*.cpp")
+file(GLOB_RECURSE ATLAS_SOURCES "src/core/*.cpp" "src/storage/*.cpp" "src/tools/*.cpp")
 
 add_library(atlas_core ${ATLAS_SOURCES})
 
