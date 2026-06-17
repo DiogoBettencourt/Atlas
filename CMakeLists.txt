@@ -45,12 +45,16 @@ if(WIN32)
   target_compile_definitions(asio_standalone INTERFACE _WIN32_WINNT=0x0A00)
 endif()
 
+# 3. cpp-httplib (a lightweight HTTP/HTTPS server and client library)
+FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.15.3)
+FetchContent_MakeAvailable(httplib)
+
 # ------------------------------------------------------------------------------
 # Atlas Core Library
 # ------------------------------------------------------------------------------
 
 # Gather source files
-file(GLOB_RECURSE ATLAS_SOURCES "src/core/*.cpp" "src/storage/*.cpp" "src/tools/*.cpp")
+file(GLOB_RECURSE ATLAS_SOURCES "src/core/*.cpp" "src/storage/*.cpp" "src/tools/*.cpp" "src/agent/*.cpp")
 
 add_library(atlas_core ${ATLAS_SOURCES})
 
@@ -60,11 +64,17 @@ target_include_directories(atlas_core PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-# Link dependencies
+# SINGLE CORRECT LINK COMMAND for dependencies
 target_link_libraries(atlas_core PUBLIC
     nlohmann_json::nlohmann_json
     asio_standalone
+    httplib::httplib
 )
+
+# CRITICAL: Windows networking libraries for httplib and Asio to function
+if(WIN32)
+  target_link_libraries(atlas_core PUBLIC ws2_32 crypt32)
+endif()
 
 # ------------------------------------------------------------------------------
 # Main Executable

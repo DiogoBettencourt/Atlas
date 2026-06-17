@@ -23,7 +23,6 @@ Application::~Application() {
     std::cout << "Atlas shutting down gracefully." << std::endl;
 }
 
-// Define the getter OUTSIDE of the constructor
 atlas::tools::ToolManager& Application::getToolManager() {
     return tool_manager_;
 }
