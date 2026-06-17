@@ -1,5 +1,6 @@
 #include "atlas/core/Application.hpp"
 #include "atlas/storage/FileStorageManager.hpp"
+#include "atlas/tools/ReadFileTool.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -11,11 +12,20 @@ Application::Application(int /*argc*/, char* /*argv*/[])
 {
     loadConfiguration();
     initializeStorage();
+
+    // Register tools here
+    tool_manager_.registerTool(std::make_unique<atlas::tools::ReadFileTool>());
+
     setupSignalHandling();
 }
 
 Application::~Application() {
     std::cout << "Atlas shutting down gracefully." << std::endl;
+}
+
+// Define the getter OUTSIDE of the constructor
+atlas::tools::ToolManager& Application::getToolManager() {
+    return tool_manager_;
 }
 
 void Application::run() {
@@ -46,7 +56,6 @@ void Application::loadConfiguration() {
 }
 
 void Application::initializeStorage() {
-    // Instantiate the specific FileStorageManager implementation
     storage_ = std::make_unique<atlas::storage::FileStorageManager>("local_workspaces");
 
     if (!storage_->initialize()) {

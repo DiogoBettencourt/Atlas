@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <string>
+#include "atlas/tools/ToolManager.hpp"
 
 // Forward declaration of the StorageManager interface to avoid circular includes
 namespace atlas::storage {
@@ -28,6 +29,9 @@ public:
     // Expose the storage manager to other components of the application safely
     storage::StorageManager& getStorageManager();
 
+    // Expose the tool manager to other components of the application safely
+    tools::ToolManager& getToolManager();
+
 private:
     void loadConfiguration();
     void setupSignalHandling();
@@ -39,6 +43,8 @@ private:
 
     // Exclusive ownership of the active storage manager
     std::unique_ptr<storage::StorageManager> storage_;
+
+    tools::ToolManager tool_manager_;
 };
 
 } // namespace atlas::core
