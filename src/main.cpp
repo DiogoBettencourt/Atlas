@@ -1,33 +1,47 @@
 #include "atlas/core/Application.hpp"
-#include "atlas/tools/ReadFileTool.hpp"
+#include "atlas/agent/LLMClient.hpp"
 #include <iostream>
 #include <exception>
 
-void testTools() {
-    std::cout << "\n--- Running Tool Engine Test ---\n";
+void testLLM() {
+    std::cout << "\n--- Running Local LLM Test ---\n";
 
-    // Initialize the tool (it will use the current build directory as the base)
-    atlas::tools::ReadFileTool read_tool(".."); // ".." goes up from build/ to the root Atlas folder
+    // Connect to the default Ollama port
+    atlas::agent::LLMClient llm("localhost", 11434);
 
-    std::cout << "[+] Tool Name: " << read_tool.name() << "\n";
-    std::cout << "[+] Tool Schema:\n" << read_tool.parametersSchema().dump(2) << "\n\n";
+    // Create the conversation history JSON
+    nlohmann::json messages = nlohmann::json::array({
+        {{"role", "user"}, {"content", "Hello Atlas! Respond with a short, 1-sentence greeting telling me you are online."}}
+    });
 
-    // Simulate an LLM calling the tool with JSON arguments
-    nlohmann::json llm_arguments = {
-        {"filepath", "CMakeLists.txt"}
-    };
+    std::cout << "[+] Sending HTTP POST request to local Ollama instance...\n";
+    std::cout << "[+] Waiting for AI to think (this might take a few seconds)...\n";
 
-    std::cout << "[+] Simulating Execution...\n";
-    std::string observation = read_tool.execute(llm_arguments);
+    try {
+        // IMPORTANT: If you downloaded a different model (like phi3 or llama3.2), change the name here!
+        nlohmann::json response = llm.generateChatResponse("qwen2.5-coder:7b", messages);
 
-    // Print the first 100 characters of the file to prove it worked
-    std::cout << "[+] Result (First 100 chars):\n" << observation.substr(0, 100) << "...\n";
+        // Extract the actual text response from the JSON
+        if (response.contains("message") && response["message"].contains("content")) {
+            std::string ai_text = response["message"]["content"].get<std::string>();
+            std::cout << "\n[+] SUCCESS! Atlas says:\n\n";
+            std::cout << "    \"" << ai_text << "\"\n\n";
+        } else {
+            std::cout << "[-] Received a response, but it didn't contain a standard message structure.\n";
+            std::cout << response.dump(4) << "\n";
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "\n[-] LLM Connection Failed: " << e.what() << "\n";
+        std::cerr << "[-] Make sure Ollama is running and you have pulled the 'llama3' model!\n";
+    }
+
     std::cout << "--------------------------------\n\n";
 }
 
 int main(int argc, char* argv[]) {
     try {
-        testTools();
+        // Run the AI connection test
+        testLLM();
 
         atlas::core::Application app(argc, argv);
         app.run();
