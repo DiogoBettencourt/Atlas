@@ -46,7 +46,11 @@ if(WIN32)
 endif()
 
 # 3. cpp-httplib (a lightweight HTTP/HTTPS server and client library)
-FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.15.3)
+FetchContent_Declare(
+  httplib
+  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+  GIT_TAG v0.18.0
+)
 FetchContent_MakeAvailable(httplib)
 
 # ------------------------------------------------------------------------------
@@ -54,7 +58,7 @@ FetchContent_MakeAvailable(httplib)
 # ------------------------------------------------------------------------------
 
 # Gather source files
-file(GLOB_RECURSE ATLAS_SOURCES "src/core/*.cpp" "src/storage/*.cpp" "src/tools/*.cpp" "src/agent/*.cpp")
+file(GLOB_RECURSE ATLAS_SOURCES "src/core/*.cpp" "src/storage/*.cpp" "src/tools/*.cpp" "src/agent/*.cpp" "src/api/*.cpp")
 
 add_library(atlas_core ${ATLAS_SOURCES})
 
@@ -81,4 +85,6 @@ endif()
 # ------------------------------------------------------------------------------
 
 add_executable(atlas src/main.cpp)
+
+# ARCHITECT FIX: Link the 'atlas' executable to the 'atlas_core' library
 target_link_libraries(atlas PRIVATE atlas_core)

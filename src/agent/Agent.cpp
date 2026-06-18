@@ -10,11 +10,11 @@ Agent::Agent(LLMClient& llm_client, tools::ToolManager& tool_manager, const std:
 
     messages_history_.push_back({
         {"role", "system"},
-        {"content", "You are Atlas, an expert local AI assistant. You have access to tools. "
-                    "RULES: "
-                    "1. If you use a tool and receive a result, DO NOT call the tool again. "
-                    "2. If you are stuck in a loop, provide your best final answer based on the observations you already have. "
-                    "3. If you do not need a tool, respond in plain text."}
+        {"content", "You are Atlas. You are an autonomous workspace agent. "
+                    "1. When asked to read a file, ALWAYS prioritize using the 'read_file' tool immediately. "
+                    "2. DO NOT ask the user for the path if you can infer it or if they have already provided the filename. "
+                    "3. If the user refers to a project file, assume it is in the workspace root. "
+                    "4. Be concise and tool-oriented."}
     });
 }
 
