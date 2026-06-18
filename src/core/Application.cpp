@@ -13,8 +13,12 @@ Application::Application(int /*argc*/, char* /*argv*/[])
     loadConfiguration();
     initializeStorage();
 
+    // Explicitly point to your Atlas folder for now
+    std::filesystem::path root_path = "C:\\Users\\diogo\\Documents\\GitHub\\Atlas";
+
+
     // Register tools here
-    tool_manager_.registerTool(std::make_unique<atlas::tools::ReadFileTool>());
+    tool_manager_.registerTool(std::make_unique<atlas::tools::ReadFileTool>(root_path));
 
     setupSignalHandling();
 }

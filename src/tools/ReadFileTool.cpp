@@ -31,36 +31,46 @@ nlohmann::json ReadFileTool::parametersSchema() const {
 }
 
 std::string ReadFileTool::execute(const nlohmann::json& arguments) {
-    // 1. Validate that the LLM provided the correct arguments
     if (!arguments.contains("filepath") || !arguments["filepath"].is_string()) {
-        return "Error: Missing or invalid 'filepath' argument. Expected a string.";
+        return "Error: Missing or invalid 'filepath' argument.";
     }
 
     std::string filepath_str = arguments["filepath"].get<std::string>();
+
+    // Remove potential stray quotes or whitespace often injected by LLM leakage
+    filepath_str.erase(std::remove(filepath_str.begin(), filepath_str.end(), '\"'), filepath_str.end());
+    filepath_str.erase(std::remove(filepath_str.begin(), filepath_str.end(), '\''), filepath_str.end());
+
+    // Trim leading/trailing whitespace
+    auto trim = [](std::string& s) {
+        s.erase(0, s.find_first_not_of(" \t\r\n"));
+        s.erase(s.find_last_not_of(" \t\r\n") + 1);
+    };
+    trim(filepath_str);
+
     std::filesystem::path target_path(filepath_str);
 
-    // 2. Resolve relative paths against our base directory
-    if (target_path.is_relative()) {
-        target_path = base_directory_ / target_path;
+    // Force root lock logic as discussed...
+    std::filesystem::path full_path = target_path.is_absolute()
+                                     ? target_path
+                                     : base_directory_ / target_path;
+
+    full_path = std::filesystem::weakly_canonical(full_path);
+
+    std::cout << "\n   [DEBUG: Final resolved path: " << full_path << "]\n";
+
+    if (!std::filesystem::exists(full_path)) {
+        return "Error: File does not exist at: " + full_path.string();
     }
 
-    // Note: In a production server, we would add strict path sanitization here
-    // to prevent directory traversal attacks (e.g., reading "../../../etc/shadow").
-    // For a local-first workspace, this is acceptable for Version 1.
-
-    // 3. Verify the file exists and is readable
-    if (!std::filesystem::exists(target_path)) {
-        return "Error: File does not exist at path: " + target_path.string();
-    }
-    if (!std::filesystem::is_regular_file(target_path)) {
-        return "Error: Path exists but is not a regular text file: " + target_path.string();
-    }
-
-    // 4. Read and return the file contents
-    std::ifstream file(target_path);
-    if (!file.is_open()) {
-        return "Error: Could not open file for reading (permission denied?): " + target_path.string();
-    }
+    // Read and return the file contents
+        std::ifstream file(full_path);
+        if (!file.is_open()) {
+            // DIAGNOSTIC: Check if the file is locked or if there's another issue
+            int err = errno;
+            return "Error: Could not open file! errno: " + std::to_string(err) +
+                   " (Permission denied: " + (err == EACCES ? "Yes" : "No") + ")";
+        }
 
     std::stringstream buffer;
     buffer << file.rdbuf();
