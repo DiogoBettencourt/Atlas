@@ -2,29 +2,29 @@
 
 #include "atlas/agent/LLMClient.hpp"
 #include "atlas/tools/ToolManager.hpp"
-#include <nlohmann/json.hpp>
+#include "atlas/core/SessionManager.hpp"
 #include <string>
 
 namespace atlas::agent {
 
 class Agent {
 public:
-    // The Agent requires a communication client and a registry of tools to interact with the world
-    Agent(LLMClient& llm_client, tools::ToolManager& tool_manager, const std::string& model_name = "llama3");
+    Agent(LLMClient& llm_client, 
+          tools::ToolManager& tool_manager, 
+          core::SessionManager& session_manager, 
+          const std::string& model_name);
 
-    // Main interaction endpoint. This blocks and runs the autonomous loop until a final answer is ready.
-    std::string chat(const std::string& user_input);
+    // Main interaction endpoint
+    std::string chat(const std::string& message, const std::string& session_id);
 
-    // Clears the active conversation context
-    void clearHistory();
+    // Required by APIServer to auto-create sessions if none is provided in the request
+    core::SessionManager& getSessionManager() { return session_manager_; }
 
 private:
     LLMClient& llm_client_;
     tools::ToolManager& tool_manager_;
+    core::SessionManager& session_manager_;
     std::string model_name_;
-
-    // Stores the active context window (using raw JSON for easy compatibility with the Ollama API)
-    nlohmann::json messages_history_;
 };
 
 } // namespace atlas::agent

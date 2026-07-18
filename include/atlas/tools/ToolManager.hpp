@@ -2,36 +2,28 @@
 
 #include "atlas/tools/Tool.hpp"
 #include <memory>
-#include <unordered_map>
-#include <vector>
 #include <string>
+#include <map>
 #include <nlohmann/json.hpp>
 
 namespace atlas::tools {
 
-/**
- * @brief Centralized registry for managing and executing AI tools.
- */
 class ToolManager {
 public:
     ToolManager() = default;
     ~ToolManager() = default;
 
-    // Takes exclusive ownership of a tool and registers it by its name
+    // Registers a tool into the manager
     void registerTool(std::unique_ptr<Tool> tool);
 
-    // Executes a tool by name, returning the result or an error string
+    // Executes a tool by name and returns the string result
     std::string executeTool(const std::string& name, const nlohmann::json& arguments);
 
-    // Compiles all registered tool schemas into a single JSON array for the LLM
-    nlohmann::json getAllToolSchemas() const;
-
-    // Returns a simple list of registered tool names
-    std::vector<std::string> getRegisteredToolNames() const;
+    // NEW: Gathers all registered tool schemas to send to the LLM
+    nlohmann::json getToolSchemas() const;
 
 private:
-    // Maps the tool's name (e.g., "read_file") to its instance
-    std::unordered_map<std::string, std::unique_ptr<Tool>> tools_;
+    std::map<std::string, std::unique_ptr<Tool>> tools_;
 };
 
 } // namespace atlas::tools

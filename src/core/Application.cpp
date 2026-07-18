@@ -87,4 +87,8 @@ void Application::setupSignalHandling() {
         });
 }
 
+core::SessionManager& Application::getSessionManager() {
+    return session_manager_;
+}
+
 } // namespace atlas::core

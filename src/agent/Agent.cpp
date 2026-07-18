@@ -1,89 +1,84 @@
 #include "atlas/agent/Agent.hpp"
 #include <iostream>
+#include <nlohmann/json.hpp>
 
 namespace atlas::agent {
 
-Agent::Agent(LLMClient& llm_client, tools::ToolManager& tool_manager, const std::string& model_name)
-    : llm_client_(llm_client), tool_manager_(tool_manager), model_name_(model_name) {
+Agent::Agent(LLMClient& llm_client, 
+             tools::ToolManager& tool_manager, 
+             core::SessionManager& session_manager, 
+             const std::string& model_name)
+    : llm_client_(llm_client), 
+      tool_manager_(tool_manager), 
+      session_manager_(session_manager), 
+      model_name_(model_name) {}
 
-    messages_history_ = nlohmann::json::array();
+std::string Agent::chat(const std::string& message, const std::string& session_id) {
+    // 1. Save user message to the session
+    session_manager_.appendMessage(session_id, "user", message);
 
-    messages_history_.push_back({
-        {"role", "system"},
-        {"content", "You are Atlas, an autonomous local AI workspace agent. "
-                    "RULES: "
-                    "1. If asked to read, inspect, or summarize a file, ALWAYS prioritize using the 'read_file' tool immediately. "
-                    "2. DO NOT ask the user for permission to read a file if they have already provided the filename. "
-                    "3. If you receive a tool result, DO NOT call the exact same tool again. Read the result and answer the user. "
-                    "4. Be concise, technical, and tool-oriented."}
-    });
-}
+    int iterations = 0;
+    const int MAX_ITERATIONS = 5; // Loop guard to prevent infinite tool execution
 
-void Agent::clearHistory() {
-    auto system_prompt = messages_history_[0];
-    messages_history_ = nlohmann::json::array({system_prompt});
-}
+    while (iterations < MAX_ITERATIONS) {
+        // 2. Fetch the up-to-date history for this specific session
+        auto history_opt = session_manager_.getSessionHistory(session_id);
+        if (!history_opt) {
+            return "Error: Invalid session ID.";
+        }
 
-std::string Agent::chat(const std::string& user_input) {
-    messages_history_.push_back({{"role", "user"}, {"content", user_input}});
-    nlohmann::json tools = tool_manager_.getAllToolSchemas();
-    const int MAX_ITERATIONS = 5;
+        // 3. Send history to the LLM
+        std::string response = llm_client_.generateResponse(*history_opt, model_name_, tool_manager_.getToolSchemas());
 
-    // Track previous call to break loops
-    std::string last_tool_call_signature = "";
-
-    for (int i = 0; i < MAX_ITERATIONS; ++i) {
-        nlohmann::json response = llm_client_.generateChatResponse(model_name_, messages_history_, tools);
-
-        if (!response.contains("message")) return "Error: Invalid response format.";
-        auto message = response["message"];
-        messages_history_.push_back(message);
-
+        // 4. Parse Tool Calls
+        // (This block safely checks if the model returned a JSON tool invocation instead of plain text)
         bool used_tool = false;
-        std::string current_call_signature = "";
+        std::string tool_name;
+        nlohmann::json tool_args;
 
-        // Helper to execute and track
-        auto execute_and_track = [&](const std::string& name, const nlohmann::json& args) {
-            std::string sig = name + ":" + args.dump();
-            if (sig == last_tool_call_signature) return false; // Loop detected
-
-            last_tool_call_signature = sig;
-            std::cout << "\n   [Atlas is using tool: " << name << "]\n";
-            std::string tool_result = tool_manager_.executeTool(name, args);
-
-            std::string observation = "[SYSTEM OBSERVATION - Tool Result]:\n" + tool_result +
-                                      "\n\nINSTRUCTION: You have the data. DO NOT call this tool again. Answer the user.";
-            messages_history_.push_back({{"role", "user"}, {"content", observation}});
-            return true;
-        };
-
-        if (message.contains("tool_calls") && !message["tool_calls"].empty()) {
-            for (const auto& tool_call : message["tool_calls"]) {
-                if (execute_and_track(tool_call["function"]["name"], tool_call["function"]["arguments"]))
+        try {
+            // Basic heuristic: if it looks like a JSON object, attempt to parse it
+            if (!response.empty() && response.front() == '{' && response.back() == '}') {
+                auto json_res = nlohmann::json::parse(response);
+                if (json_res.contains("name") && json_res.contains("arguments")) {
                     used_tool = true;
+                    tool_name = json_res["name"].get<std::string>();
+                    tool_args = json_res["arguments"];
+                }
             }
-        }
-        else if (message.contains("content") && !message["content"].is_null()) {
-            std::string content = message["content"].get<std::string>();
-            if (content.find("\"name\"") != std::string::npos && content.find("\"arguments\"") != std::string::npos) {
-                try {
-                    size_t start = content.find('{'); size_t end = content.rfind('}');
-                    if (start != std::string::npos && end != std::string::npos) {
-                        auto parsed = nlohmann::json::parse(content.substr(start, end - start + 1));
-                        if (execute_and_track(parsed["name"], parsed["arguments"]))
-                            used_tool = true;
-                    }
-                } catch (...) {}
-            }
+        } catch (...) {
+            // Not a JSON tool call, treat as a standard text response
+            used_tool = false;
         }
 
-        if (used_tool) { continue; }
-        if (message.contains("content") && !message["content"].is_null()) {
-            return message["content"].get<std::string>();
+        // 5. If NO tools are used, append the final answer and return
+        if (!used_tool) {
+            session_manager_.appendMessage(session_id, "assistant", response);
+            return response;
         }
+
+        // 6. If tools ARE used, execute them
+        std::cout << "\n   [Atlas is using tool: " << tool_name << "]\n";
+
+        // Append the LLM's thought process/tool request to history
+        session_manager_.appendMessage(session_id, "assistant", response);
+
+        // Execute the tool via ToolManager
+        std::string tool_result;
+        try {
+            // Note: If your ToolManager uses a different execution signature, adjust this line
+            tool_result = tool_manager_.executeTool(tool_name, tool_args); 
+        } catch (const std::exception& e) {
+            tool_result = "Tool Execution Error: " + std::string(e.what());
+        }
+
+        // Append the result back as a user/system message for the next reasoning loop
+        session_manager_.appendMessage(session_id, "user", "Tool Result:\n" + tool_result);
+
+        iterations++;
     }
 
-    return "\n  [!] Agent reached iteration limit.";
+    return "Error: Agent reached maximum iterations without providing a final answer.";
 }
 
 } // namespace atlas::agent

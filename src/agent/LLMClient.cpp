@@ -1,54 +1,58 @@
-#include <httplib.h>
 #include "atlas/agent/LLMClient.hpp"
+#include <httplib.h> // Assuming you are using cpp-httplib
 #include <iostream>
-#include <stdexcept>
 
 namespace atlas::agent {
 
-LLMClient::LLMClient(const std::string& host, int port)
-    : host_(host), port_(port) {}
+LLMClient::LLMClient() {}
+LLMClient::~LLMClient() {}
 
-nlohmann::json LLMClient::generateChatResponse(
-    const std::string& model_name,
-    const nlohmann::json& messages,
-    const nlohmann::json& tools)
-{
-    // 1. Set up the HTTP client
-    httplib::Client cli(host_, port_);
-    cli.set_read_timeout(120, 0); // Give the LLM up to 2 minutes to think
+std::string LLMClient::generateResponse(const std::vector<nlohmann::json>& messages, 
+                                        const std::string& model_name,
+                                        const nlohmann::json& tools) {
+                                            
+    // Connect to local Ollama instance
+    httplib::Client cli("127.0.0.1", 11434);
+    cli.set_read_timeout(120, 0); // 2 minute timeout for generation
 
-    // 2. Construct the Ollama API payload
-    nlohmann::json payload = {
-        {"model", model_name},
-        {"messages", messages},
-        {"stream", false} // For Version 1, we will wait for the complete response
-    };
+    nlohmann::json payload;
+    payload["model"] = model_name;
+    payload["messages"] = messages;
+    payload["stream"] = false; // We want the full response at once for now
 
-    // Only inject tools if they were provided
-    if (tools != nullptr && !tools.empty()) {
+    // If tools are provided, pass them to Ollama
+    if (!tools.empty() && tools.is_array()) {
         payload["tools"] = tools;
     }
 
-    std::string payload_str = payload.dump();
+    auto res = cli.Post("/api/chat", payload.dump(), "application/json");
 
-    // 3. Send the POST request to Ollama's chat endpoint
-    auto res = cli.Post("/api/chat", payload_str, "application/json");
-
-    // 4. Handle HTTP errors
-    if (!res) {
-        auto err = res.error();
-        throw std::runtime_error("HTTP Client Error [" + httplib::to_string(err) + "]: Could not connect to LLM at " + host_ + ":" + std::to_string(port_));
-    }
-
-    if (res->status != 200) {
-        throw std::runtime_error("LLM API Error (Status " + std::to_string(res->status) + "): " + res->body);
-    }
-
-    // 5. Parse and return the successful JSON response
-    try {
-        return nlohmann::json::parse(res->body);
-    } catch (const nlohmann::json::parse_error& e) {
-        throw std::runtime_error("Failed to parse LLM JSON response: " + std::string(e.what()));
+    if (res && res->status == 200) {
+        try {
+            auto response_json = nlohmann::json::parse(res->body);
+            
+            // Check if the model decided to use a native tool call (Ollama specific)
+            if (response_json.contains("message") && response_json["message"].contains("tool_calls")) {
+                 auto tool_calls = response_json["message"]["tool_calls"];
+                 if (!tool_calls.empty()) {
+                     // Format it into the JSON string that our Agent.cpp expects to parse
+                     nlohmann::json tool_invocation = {
+                         {"name", tool_calls[0]["function"]["name"]},
+                         {"arguments", nlohmann::json::parse(tool_calls[0]["function"]["arguments"].get<std::string>())}
+                     };
+                     return tool_invocation.dump();
+                 }
+            }
+            
+            // Otherwise, return standard text response
+            return response_json["message"]["content"].get<std::string>();
+            
+        } catch (const std::exception& e) {
+            return std::string("Error parsing LLM response: ") + e.what();
+        }
+    } else {
+        std::string err_info = res ? std::to_string(res->status) : "Connection failed";
+        return "LLM API Error: " + err_info;
     }
 }
 

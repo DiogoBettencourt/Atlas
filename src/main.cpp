@@ -6,16 +6,22 @@
 
 int main(int argc, char* argv[]) {
     try {
-        // 1. Initialize the Core Workspace (Storage, Tools, Paths)
+        // 1. Initialize the Core Application
         atlas::core::Application app(argc, argv);
 
-        // 2. Initialize the AI Brain
+        // 2. Initialize the LLM Client
         atlas::agent::LLMClient llm_client;
 
-        // We pass the ToolManager from the Application directly to the Agent
-        atlas::agent::Agent agent(llm_client, app.getToolManager(), "qwen2.5-coder:7b");
+        // 3. Initialize the Agent with the new constructor signature
+        // We now pass: llm_client, tool_manager, session_manager, model_name
+        atlas::agent::Agent agent(
+            llm_client, 
+            app.getToolManager(), 
+            app.getSessionManager(), // <--- THIS IS THE MISSING ARGUMENT
+            "qwen2.5-coder:7b"
+        );
 
-        // 3. Initialize and start the API Server
+        // 4. Initialize and start the API Server
         atlas::api::APIServer api_server(agent, "127.0.0.1", 8080);
         api_server.start();
 

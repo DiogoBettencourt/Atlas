@@ -14,44 +14,50 @@ APIServer::~APIServer() {
 }
 
 void APIServer::setupRoutes() {
-    // Basic Health Check Endpoint
-    server_.Get("/status", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(R"({"status": "Atlas AI Online", "version": "0.1.0"})", "application/json");
-    });
-
-    // Main Chat Endpoint
     server_.Post("/chat", [this](const httplib::Request& req, httplib::Response& res) {
         try {
             auto json_req = nlohmann::json::parse(req.body);
+            
             if (!json_req.contains("message") || !json_req["message"].is_string()) {
                 res.status = 400;
-                res.set_content(R"({"error": "Missing or invalid 'message' field"})", "application/json");
+                res.set_content(R"({"error": "Missing or invalid 'message' field."})", "application/json");
                 return;
             }
 
             std::string user_message = json_req["message"];
-            std::cout << "\n[API] Received message from client.\n";
+            
+            std::string session_id;
+            if (json_req.contains("session_id") && json_req["session_id"].is_string() && !json_req["session_id"].get<std::string>().empty()) {
+                session_id = json_req["session_id"].get<std::string>();
+            } else {
+                session_id = agent_.getSessionManager().createSession();
+            }
 
-            // Pass the message to our autonomous agent
-            std::string agent_response = agent_.chat(user_message);
+            std::cout << "\n[API] Received message for session: " << session_id << "\n";
 
-            // Package the response
+            std::string agent_response = agent_.chat(user_message, session_id);
+
             nlohmann::json json_res = {
+                {"session_id", session_id},
                 {"response", agent_response}
             };
             res.set_content(json_res.dump(), "application/json");
-
+            
+        } catch (const nlohmann::json::parse_error&) {
+            res.status = 400;
+            res.set_content(R"({"error": "Invalid JSON format."})", "application/json");
         } catch (const std::exception& e) {
             res.status = 500;
-            nlohmann::json err = {{"error", e.what()}};
-            res.set_content(err.dump(), "application/json");
+            res.set_content(R"({"error": "Internal server error."})", "application/json");
+            std::cerr << "API Error: " << e.what() << "\n";
         }
     });
 }
 
 void APIServer::start() {
-    std::cout << "[API] Starting server on http://" << host_ << ":" << port_ << "\n";
-    // Run the server in a background thread so it doesn't block the main application loop
+    std::cout << "Starting API Server on http://" << host_ << ":" << port_ << "\n";
+    
+    // FIX: Use std::make_unique to assign the thread to the pointer
     server_thread_ = std::make_unique<std::thread>([this]() {
         server_.listen(host_, port_);
     });
@@ -61,9 +67,9 @@ void APIServer::stop() {
     if (server_.is_running()) {
         server_.stop();
     }
+    // FIX: Check if the pointer exists AND if the thread is joinable
     if (server_thread_ && server_thread_->joinable()) {
         server_thread_->join();
-        std::cout << "[API] Server stopped gracefully.\n";
     }
 }
 

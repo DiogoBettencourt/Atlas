@@ -6,6 +6,7 @@
 #include <string>
 #include "atlas/tools/ToolManager.hpp"
 #include "atlas/core/WorkspaceManager.hpp"
+#include "atlas/core/SessionManager.hpp"
 
 // Forward declaration of the StorageManager interface to avoid circular includes
 namespace atlas::storage {
@@ -33,6 +34,8 @@ public:
     // Expose the tool manager to other components of the application safely
     tools::ToolManager& getToolManager();
 
+    core::SessionManager& getSessionManager();
+
 private:
     void loadConfiguration();
     void setupSignalHandling();
@@ -48,6 +51,7 @@ private:
     std::unique_ptr<storage::StorageManager> storage_;
 
     tools::ToolManager tool_manager_;
+    core::SessionManager session_manager_;
     core::WorkspaceManager workspace_manager_;
 };
 
