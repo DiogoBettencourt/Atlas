@@ -2,9 +2,16 @@
 #include "atlas/storage/FileStorageManager.hpp"
 #include "atlas/tools/ReadFileTool.hpp"
 #include <iostream>
+#include <windows.h> // For GetModuleFileName
 #include <stdexcept>
 
 namespace atlas::core {
+
+std::filesystem::path Application::getExecutableDir() {
+    char buffer[MAX_PATH];
+    GetModuleFileNameA(NULL, buffer, MAX_PATH);
+    return std::filesystem::path(buffer).parent_path();
+}
 
 Application::Application(int /*argc*/, char* /*argv*/[])
     : io_context_(),
@@ -13,12 +20,15 @@ Application::Application(int /*argc*/, char* /*argv*/[])
     loadConfiguration();
     initializeStorage();
 
-    // Explicitly point to your Atlas folder for now
-    std::filesystem::path root_path = "C:\\Users\\diogo\\Documents\\GitHub\\Atlas";
+    // 1. Get our absolute root path (This will work now!)
+    auto exe_dir = getExecutableDir();
+    std::filesystem::path root_path = exe_dir.parent_path().parent_path();
 
+    // 2. Register this folder as the "Atlas" workspace
+    workspace_manager_.addWorkspace("AtlasCore", root_path);
 
-    // Register tools here
-    tool_manager_.registerTool(std::make_unique<atlas::tools::ReadFileTool>(root_path));
+    // 3. Pass the dynamic manager to the tool
+    tool_manager_.registerTool(std::make_unique<atlas::tools::ReadFileTool>(workspace_manager_));
 
     setupSignalHandling();
 }

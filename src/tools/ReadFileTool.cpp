@@ -2,11 +2,13 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <algorithm> // Required for std::remove
 
 namespace atlas::tools {
 
-ReadFileTool::ReadFileTool(const std::filesystem::path& base_directory)
-    : base_directory_(base_directory) {}
+// ARCHITECT FIX: Constructor now takes the dynamic WorkspaceManager
+ReadFileTool::ReadFileTool(core::WorkspaceManager& workspace_manager)
+    : workspace_manager_(workspace_manager) {}
 
 std::string ReadFileTool::name() const {
     return "read_file";
@@ -35,6 +37,13 @@ std::string ReadFileTool::execute(const nlohmann::json& arguments) {
         return "Error: Missing or invalid 'filepath' argument.";
     }
 
+    // ARCHITECT FIX: Ask the manager for the current active workspace path
+    auto active_ws = workspace_manager_.getActiveWorkspacePath();
+    if (!active_ws) {
+        return "Error: No active workspace set. Cannot resolve relative paths.";
+    }
+    std::filesystem::path base_directory = *active_ws;
+
     std::string filepath_str = arguments["filepath"].get<std::string>();
 
     // Remove potential stray quotes or whitespace often injected by LLM leakage
@@ -50,10 +59,10 @@ std::string ReadFileTool::execute(const nlohmann::json& arguments) {
 
     std::filesystem::path target_path(filepath_str);
 
-    // Force root lock logic as discussed...
+    // Force root lock logic using the dynamic base_directory
     std::filesystem::path full_path = target_path.is_absolute()
-                                     ? target_path
-                                     : base_directory_ / target_path;
+                                         ? target_path
+                                         : base_directory / target_path;
 
     full_path = std::filesystem::weakly_canonical(full_path);
 
@@ -64,13 +73,13 @@ std::string ReadFileTool::execute(const nlohmann::json& arguments) {
     }
 
     // Read and return the file contents
-        std::ifstream file(full_path);
-        if (!file.is_open()) {
-            // DIAGNOSTIC: Check if the file is locked or if there's another issue
-            int err = errno;
-            return "Error: Could not open file! errno: " + std::to_string(err) +
-                   " (Permission denied: " + (err == EACCES ? "Yes" : "No") + ")";
-        }
+    std::ifstream file(full_path);
+    if (!file.is_open()) {
+        // DIAGNOSTIC: Check if the file is locked or if there's another issue
+        int err = errno;
+        return "Error: Could not open file! errno: " + std::to_string(err) +
+               " (Permission denied: " + (err == EACCES ? "Yes" : "No") + ")";
+    }
 
     std::stringstream buffer;
     buffer << file.rdbuf();

@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include "atlas/tools/ToolManager.hpp"
+#include "atlas/core/WorkspaceManager.hpp"
 
 // Forward declaration of the StorageManager interface to avoid circular includes
 namespace atlas::storage {
@@ -41,10 +42,13 @@ private:
     nlohmann::json config_;
     asio::signal_set signals_;
 
+    std::filesystem::path getExecutableDir();
+
     // Exclusive ownership of the active storage manager
     std::unique_ptr<storage::StorageManager> storage_;
 
     tools::ToolManager tool_manager_;
+    core::WorkspaceManager workspace_manager_;
 };
 
 } // namespace atlas::core
