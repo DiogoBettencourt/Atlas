@@ -1,6 +1,8 @@
 #include "atlas/core/Application.hpp"
 #include "atlas/storage/FileStorageManager.hpp"
 #include "atlas/tools/ReadFileTool.hpp"
+#include "atlas/tools/SearchSymbolTool.hpp"
+#include "atlas/core/SymbolIndexer.hpp"
 #include <iostream>
 #include <windows.h> // For GetModuleFileName
 #include <stdexcept>
@@ -27,8 +29,14 @@ Application::Application(int /*argc*/, char* /*argv*/[])
     // 2. Register this folder as the "Atlas" workspace
     workspace_manager_.addWorkspace("AtlasCore", root_path);
 
-    // 3. Pass the dynamic manager to the tool
+    // 3. Index the codebase symbols immediately
+    symbol_indexer_.indexWorkspace(root_path);
+
+    // 4. Pass the dynamic manager to the tools
     tool_manager_.registerTool(std::make_unique<atlas::tools::ReadFileTool>(workspace_manager_));
+    
+    // ADD THIS LINE:
+    tool_manager_.registerTool(std::make_unique<atlas::tools::SearchSymbolTool>(symbol_indexer_));
 
     setupSignalHandling();
 }
