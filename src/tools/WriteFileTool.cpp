@@ -1,64 +1,57 @@
 #include "atlas/tools/WriteFileTool.hpp"
+#include "atlas/core/WorkspaceManager.hpp"
+
 #include <fstream>
-#include <iostream>
 
 namespace atlas::tools {
 
-WriteFileTool::WriteFileTool(core::WorkspaceManager& workspace_manager)
-    : workspace_manager_(workspace_manager) {}
-
-std::string WriteFileTool::name() const {
-    return "write_file";
-}
-
-std::string WriteFileTool::description() const {
-    return "Creates a new file or completely overwrites an existing file with new content. Use this to write full files.";
-}
+namespace fs = std::filesystem;
 
 nlohmann::json WriteFileTool::parametersSchema() const {
-    return {
+    return nlohmann::json{
         {"type", "object"},
         {"properties", {
             {"path", {
                 {"type", "string"},
-                {"description", "The relative path to the file (e.g., 'src/main.cpp')."}
+                {"description", "Workspace-relative path to write."}
             }},
             {"content", {
                 {"type", "string"},
-                {"description", "The complete source code or text to write into the file."}
+                {"description", "Full text content to write to the file."}
             }}
         }},
         {"required", nlohmann::json::array({"path", "content"})}
     };
 }
 
-std::string WriteFileTool::execute(const nlohmann::json& arguments) {
-    if (!arguments.contains("path") || !arguments["content"].is_string()) {
-        return "Error: Missing 'path' or 'content'.";
+nlohmann::json WriteFileTool::execute(const nlohmann::json& arguments,
+                                       const std::string& workspace_root) const {
+    if (!arguments.contains("path") || !arguments["path"].is_string() ||
+        !arguments.contains("content") || !arguments["content"].is_string()) {
+        return nlohmann::json{{"error", "missing required arguments: path, content"}};
     }
 
-    std::string path_str = arguments["path"];
-    std::string content = arguments["content"];
-
     try {
-        // Enforce sandboxing: Hardcoded to "AtlasCore" workspace for now
-        auto safe_path = workspace_manager_.resolveSafePath("AtlasCore", path_str);
+        auto resolved = core::WorkspaceManager::resolveSafe(workspace_root, arguments["path"]);
 
-        // Create parent directories if they don't exist
-        if (safe_path.has_parent_path()) {
-            std::filesystem::create_directories(safe_path.parent_path());
+        std::error_code ec;
+        fs::create_directories(resolved.parent_path(), ec);
+
+        std::ofstream out(resolved, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            return nlohmann::json{{"error", "unable to open file for writing"}};
         }
+        std::string content = arguments["content"].get<std::string>();
+        out << content;
+        out.close();
 
-        std::ofstream file(safe_path, std::ios::trunc);
-        if (!file.is_open()) {
-            return "Error: Could not open file for writing at " + safe_path.string();
-        }
-
-        file << content;
-        return "Success: File written to " + safe_path.string();
-
+        return nlohmann::json{
+            {"path", arguments["path"]},
+            {"bytes_written", content.size()},
+            {"status", "ok"}
+        };
     } catch (const std::exception& e) {
-        return std::string("Error: ") + e.what();
+        return nlohmann::json{{"error", e.what()}};
     }
 }
 

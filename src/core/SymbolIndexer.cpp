@@ -1,109 +1,130 @@
 #include "atlas/core/SymbolIndexer.hpp"
+
+#include <algorithm>
 #include <fstream>
-#include <sstream>
 #include <regex>
-#include <iostream>
-#include <unordered_set>
+#include <sstream>
 
 namespace atlas::core {
 
-void SymbolIndexer::indexWorkspace(const std::filesystem::path& root_path) {
-    root_path_ = root_path;
-    symbol_table_.clear();
+namespace fs = std::filesystem;
 
-    if (!std::filesystem::exists(root_path_)) return;
-
-    // 1. Directories we DO NOT want to scan (Performance Guard)
-    std::unordered_set<std::string> ignored_dirs = {
-        ".git", "build", "node_modules", "out", "dist", "bin", "obj"
+void to_json(nlohmann::json& j, const SymbolEntry& s) {
+    j = nlohmann::json{
+        {"kind", s.kind},
+        {"name", s.name},
+        {"file", s.file},
+        {"line", s.line}
     };
+}
 
-    // 2. Walk the entire workspace, skipping ignored directories
-    for (auto it = std::filesystem::recursive_directory_iterator(root_path_); 
-         it != std::filesystem::recursive_directory_iterator(); 
-         ++it) {
-        
-        if (it->is_directory()) {
-            if (ignored_dirs.count(it->path().filename().string())) {
-                it.disable_recursion_pending(); // Skip this entire folder
-            }
+namespace {
+
+bool hasRecognizedExtension(const fs::path& p) {
+    static const std::vector<std::string> kExtensions = {
+        ".hpp", ".h", ".hh", ".cpp", ".cc", ".cxx", ".py", ".js", ".ts", ".tsx"
+    };
+    auto ext = p.extension().string();
+    return std::find(kExtensions.begin(), kExtensions.end(), ext) != kExtensions.end();
+}
+
+std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return s;
+}
+
+} // namespace
+
+void SymbolIndexer::indexDirectory(const fs::path& root) {
+    symbols_.clear();
+
+    if (!fs::exists(root) || !fs::is_directory(root)) {
+        return;
+    }
+
+    for (const auto& entry : fs::recursive_directory_iterator(
+             root, fs::directory_options::skip_permission_denied)) {
+        if (!entry.is_regular_file() || !hasRecognizedExtension(entry.path())) {
             continue;
         }
-
-        if (it->is_regular_file()) {
-            parseFile(it->path());
+        // Skip common noise directories.
+        auto path_str = entry.path().generic_string();
+        if (path_str.find("/build/") != std::string::npos ||
+            path_str.find("/.git/") != std::string::npos ||
+            path_str.find("/node_modules/") != std::string::npos) {
+            continue;
         }
+        indexFile(entry.path(), root);
     }
-
-    std::cout << "[SymbolIndexer] Indexed generic workspace symbols from: " << root_path_ << "\n";
 }
 
-void SymbolIndexer::parseFile(const std::filesystem::path& file_path) {
-    std::string ext = file_path.extension().string();
-    
-    // 3. Determine which Regex to use based on file extension
-    std::regex symbol_regex;
-    bool supported_file = false;
-
-    if (ext == ".hpp" || ext == ".h" || ext == ".cpp") {
-        // C++: Matches 'class X' or 'struct Y'
-        symbol_regex = std::regex(R"(\b(class|struct)\s+(\w+))");
-        supported_file = true;
-    } else if (ext == ".py") {
-        // Python: Matches 'class X:' or 'def Y:'
-        symbol_regex = std::regex(R"(^\s*(class|def)\s+(\w+))");
-        supported_file = true;
-    } else if (ext == ".js" || ext == ".ts") {
-        // JS/TS: Matches 'class X' or 'function Y'
-        symbol_regex = std::regex(R"(\b(class|function)\s+(\w+))");
-        supported_file = true;
+void SymbolIndexer::indexFile(const fs::path& file, const fs::path& root) {
+    std::ifstream in(file);
+    if (!in) {
+        return;
     }
 
-    if (!supported_file) return; // Skip files we don't know how to parse yet
+    // Coarse patterns covering the common declaration shapes we care about.
+    static const std::regex class_re(R"(^\s*(class|struct)\s+([A-Za-z_]\w*))");
+    static const std::regex cpp_func_re(
+        R"(^\s*(?:[\w:<>,\s\*&]+?\s+)([A-Za-z_]\w*(?:::[A-Za-z_]\w*)?)\s*\([^;{]*\)\s*(?:const)?\s*\{?\s*$)");
+    static const std::regex py_def_re(R"(^\s*def\s+([A-Za-z_]\w*)\s*\()");
+    static const std::regex py_class_re(R"(^\s*class\s+([A-Za-z_]\w*))");
+    static const std::regex js_func_re(
+        R"(^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\()");
 
-    std::ifstream file(file_path);
-    if (!file.is_open()) return;
-
+    std::string relative = fs::relative(file, root).generic_string();
     std::string line;
-    int line_num = 0;
+    unsigned int line_no = 0;
+    std::smatch match;
 
-    while (std::getline(file, line)) {
-        line_num++;
-        std::smatch match;
-        if (std::regex_search(line, match, symbol_regex)) {
-            if (match.size() > 2) {
-                std::string kind = match[1].str();
-                std::string name = match[2].str();
+    while (std::getline(in, line)) {
+        ++line_no;
 
-                SymbolInfo info{name, kind, file_path, line_num};
-                symbol_table_[name].push_back(info);
+        if (std::regex_search(line, match, class_re)) {
+            symbols_.push_back(SymbolEntry{match[1].str(), match[2].str(), relative, line_no});
+            continue;
+        }
+        if (std::regex_search(line, match, py_class_re)) {
+            symbols_.push_back(SymbolEntry{"class", match[1].str(), relative, line_no});
+            continue;
+        }
+        if (std::regex_search(line, match, py_def_re)) {
+            symbols_.push_back(SymbolEntry{"function", match[1].str(), relative, line_no});
+            continue;
+        }
+        if (std::regex_search(line, match, js_func_re)) {
+            symbols_.push_back(SymbolEntry{"function", match[1].str(), relative, line_no});
+            continue;
+        }
+        // C++ free function / method definitions - kept last since it's the
+        // broadest pattern and most prone to false positives.
+        if (line.find('(') != std::string::npos && line.find(';') == std::string::npos &&
+            std::regex_search(line, match, cpp_func_re)) {
+            const std::string& candidate = match[1].str();
+            // Filter out obvious non-declarations (control flow keywords).
+            static const std::vector<std::string> kExcluded = {
+                "if", "for", "while", "switch", "catch", "return"
+            };
+            if (std::find(kExcluded.begin(), kExcluded.end(), candidate) == kExcluded.end()) {
+                std::string kind = candidate.find("::") != std::string::npos ? "method" : "function";
+                symbols_.push_back(SymbolEntry{kind, candidate, relative, line_no});
             }
         }
     }
 }
 
-// ... searchSymbols and getSymbolGraphSummary remain exactly the same ...
-std::vector<SymbolInfo> SymbolIndexer::searchSymbols(const std::string& query) const {
-    std::vector<SymbolInfo> results;
-    for (const auto& [name, symbols] : symbol_table_) {
-        if (name.find(query) != std::string::npos) {
-            for (const auto& sym : symbols) {
-                results.push_back(sym);
-            }
+std::vector<SymbolEntry> SymbolIndexer::search(const std::string& query) const {
+    std::vector<SymbolEntry> results;
+    std::string needle = lower(query);
+    for (const auto& sym : symbols_) {
+        if (lower(sym.name).find(needle) != std::string::npos) {
+            results.push_back(sym);
         }
     }
     return results;
-}
-
-std::string SymbolIndexer::getSymbolGraphSummary() const {
-    std::ostringstream ss;
-    ss << "Indexed Codebase Symbols:\n";
-    for (const auto& [name, symbols] : symbol_table_) {
-        for (const auto& sym : symbols) {
-            ss << "- [" << sym.type << "] " << sym.name << " (in " << sym.file_path.filename().string() << ")\n";
-        }
-    }
-    return ss.str();
 }
 
 } // namespace atlas::core

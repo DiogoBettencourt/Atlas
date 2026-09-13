@@ -1,38 +1,42 @@
 #pragma once
 
-#include <string>
-#include <vector>
-#include <map>
+#include "atlas/storage/StorageManager.hpp"
 #include <mutex>
 #include <nlohmann/json.hpp>
-#include <optional>
+#include <string>
+#include <unordered_map>
 
 namespace atlas::core {
 
+// Owns per-session chat history (role/content/tool-call turns) and
+// persists it through a StorageManager so conversations survive restarts.
+// Sessions are cached in memory and lazily loaded from storage on first
+// access.
 class SessionManager {
 public:
-    SessionManager() = default;
+    explicit SessionManager(storage::StorageManager& storage);
 
-    // Creates a new session and returns its unique ID
-    std::string createSession();
+    SessionManager(const SessionManager&) = delete;
+    SessionManager& operator=(const SessionManager&) = delete;
+    SessionManager(SessionManager&&) = delete;
+    SessionManager& operator=(SessionManager&&) = delete;
 
-    // Appends a message to a specific session
-    bool appendMessage(const std::string& session_id, const std::string& role, const std::string& content);
+    // Returns the full message history for `session_id` (creating an empty
+    // one if it doesn't exist yet), in Ollama/OpenAI chat message format:
+    // [{"role": "user"|"assistant"|"system"|"tool", "content": "...", ...}]
+    [[nodiscard]] nlohmann::json getHistory(const std::string& session_id);
 
-    // Retrieves the full history for a session
-    std::optional<std::vector<nlohmann::json>> getSessionHistory(const std::string& session_id);
+    // Appends a single message to the session's history and persists it.
+    void appendMessage(const std::string& session_id, const nlohmann::json& message);
 
-    // Deletes a session to free up memory
-    bool deleteSession(const std::string& session_id);
+    // Clears a session's history both in memory and on disk.
+    void resetSession(const std::string& session_id);
 
 private:
-    // Generates a simple random ID
-    std::string generateUUID();
+    [[nodiscard]] std::string storageKey(const std::string& session_id) const;
 
-    // Maps session_id to a list of OpenAI-formatted messages
-    std::map<std::string, std::vector<nlohmann::json>> sessions_;
-    
-    // Mutex for thread-safety (essential since the APIServer runs on a background thread)
+    storage::StorageManager& storage_;
+    std::unordered_map<std::string, nlohmann::json> cache_;
     std::mutex mutex_;
 };
 

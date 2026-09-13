@@ -1,42 +1,49 @@
 #pragma once
 
-#include <string>
 #include <nlohmann/json.hpp>
+#include <string>
 
 namespace atlas::tools {
 
-/**
- * @brief Abstract interface for all AI Tools in the Atlas workspace.
- * * Every tool must implement this interface so the Agent runtime can dynamically
- * load, describe, and execute them without hardcoding dependencies.
- */
+// Base interface for every agent-callable tool. Concrete tools must be
+// stateless with respect to conversation (all context comes in via
+// `arguments` and `workspace_root`) so they can be safely shared across
+// sessions through the ToolManager registry.
 class Tool {
 public:
     virtual ~Tool() = default;
 
-    /**
-     * @brief The unique name of the tool (e.g., "read_file", "search_web").
-     * @return A string containing only lowercase letters and underscores.
-     */
-    virtual std::string name() const = 0;
+    // Machine name used by the LLM to invoke this tool, e.g. "read_file".
+    [[nodiscard]] virtual std::string name() const = 0;
 
-    /**
-     * @brief A detailed description of what the tool does.
-     * This is critical, as the LLM uses this text to decide whether to use the tool.
-     */
-    virtual std::string description() const = 0;
+    // Human-readable description shown to the LLM in the tool schema.
+    [[nodiscard]] virtual std::string description() const = 0;
 
-    /**
-     * @brief Returns the JSON Schema defining the expected arguments.
-     * This schema will be passed directly to the LLM to enforce strict argument types.
-     */
-    virtual nlohmann::json parametersSchema() const = 0;
+    // JSON Schema (as an OpenAI/Ollama-style "parameters" object) describing
+    // the arguments this tool accepts.
+    [[nodiscard]] virtual nlohmann::json parametersSchema() const = 0;
 
-    /**
-     * @brief Executes the tool with the provided JSON arguments.
-     * * @param arguments A JSON object matching the parametersSchema.
-     * @return A string representing the result (Observation) or an error message.
-     */
-    virtual std::string execute(const nlohmann::json& arguments) = 0;
+    // Executes the tool. `workspace_root` is the sandbox root the tool must
+    // confine all filesystem operations to. Returns a JSON-serializable
+    // result (or an {"error": "..."} object on failure) that gets fed back
+    // into the LLM's context as a tool result message.
+    [[nodiscard]] virtual nlohmann::json execute(
+        const nlohmann::json& arguments,
+        const std::string& workspace_root) const = 0;
+
+    // Convenience: renders this tool as an LLM-compatible function schema,
+    // matching the {"type": "function", "function": {...}} shape used by
+    // Ollama / OpenAI-style chat completion APIs.
+    [[nodiscard]] nlohmann::json toFunctionSchema() const {
+        return nlohmann::json{
+            {"type", "function"},
+            {"function", {
+                {"name", name()},
+                {"description", description()},
+                {"parameters", parametersSchema()}
+            }}
+        };
+    }
 };
+
 } // namespace atlas::tools

@@ -2,34 +2,35 @@
 
 #include "atlas/storage/StorageManager.hpp"
 #include <filesystem>
-#include <string>
+#include <mutex>
 
 namespace atlas::storage {
 
-class FileStorageManager : public StorageManager {
+// Filesystem-backed implementation of StorageManager. Each key maps to a
+// single ".json" file rooted at `data_root`, with '/' in keys mapped to
+// nested directories (e.g. key "sessions/abc" -> <root>/sessions/abc.json).
+// A mutex serializes access since Atlas may be driven by multiple httplib
+// worker threads concurrently.
+class FileStorageManager final : public StorageManager {
 public:
-    // Constructor requires a base directory where all workspaces will be stored
-    explicit FileStorageManager(const std::string& base_directory);
-    ~FileStorageManager() override = default;
+    explicit FileStorageManager(std::filesystem::path data_root);
 
-    // Delete copy and move constructors to prevent accidental duplication of the storage manager
     FileStorageManager(const FileStorageManager&) = delete;
     FileStorageManager& operator=(const FileStorageManager&) = delete;
     FileStorageManager(FileStorageManager&&) = delete;
     FileStorageManager& operator=(FileStorageManager&&) = delete;
 
-    // Interface Implementation
-    bool initialize() override;
-    bool saveWorkspace(const std::string& workspace_id, const nlohmann::json& data) override;
-    std::optional<nlohmann::json> loadWorkspace(const std::string& workspace_id) override;
-    std::vector<std::string> listWorkspaces() override;
-    bool deleteWorkspace(const std::string& workspace_id) override;
+    void save(const std::string& key, const nlohmann::json& document) override;
+    [[nodiscard]] std::optional<nlohmann::json> load(const std::string& key) const override;
+    [[nodiscard]] bool exists(const std::string& key) const override;
+    bool remove(const std::string& key) override;
+    [[nodiscard]] std::vector<std::string> listKeys(const std::string& prefix) const override;
 
 private:
-    // Helper function to construct the full file path for a given workspace ID
-    std::filesystem::path getFilePath(const std::string& workspace_id) const;
+    [[nodiscard]] std::filesystem::path pathFor(const std::string& key) const;
 
-    std::filesystem::path base_directory_;
+    std::filesystem::path data_root_;
+    mutable std::mutex mutex_;
 };
 
 } // namespace atlas::storage
