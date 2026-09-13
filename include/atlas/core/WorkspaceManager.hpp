@@ -1,36 +1,47 @@
 #pragma once
 
 #include <filesystem>
-#include <string>
-#include <map>
 #include <optional>
+#include <string>
+#include <unordered_map>
 
 namespace atlas::core {
 
+// Context-aware router that maps logical workspace names to physical
+// directories on disk, and enforces path-traversal-safe resolution of any
+// relative path an agent (or tool) requests within a workspace.
 class WorkspaceManager {
 public:
-    WorkspaceManager() = default;
+    explicit WorkspaceManager(std::filesystem::path workspaces_root);
 
-    // Register a new workspace by a friendly name (e.g., "Atlas", "MyApp")
-    bool addWorkspace(const std::string& name, const std::filesystem::path& root_path);
+    WorkspaceManager(const WorkspaceManager&) = delete;
+    WorkspaceManager& operator=(const WorkspaceManager&) = delete;
+    WorkspaceManager(WorkspaceManager&&) = delete;
+    WorkspaceManager& operator=(WorkspaceManager&&) = delete;
 
-    // Remove a workspace from tracking
-    bool removeWorkspace(const std::string& name);
+    // Registers (and creates on disk if needed) a workspace with the given
+    // logical name, rooted at `physical_path`. If `physical_path` is empty,
+    // defaults to <workspaces_root>/<name>.
+    std::filesystem::path createOrGetWorkspace(const std::string& name,
+                                                const std::filesystem::path& physical_path = {});
 
-    // Set the "active" context for the agent
-    bool setActiveWorkspace(const std::string& name);
+    // Returns the sandbox root for a previously created workspace, or
+    // std::nullopt if unknown.
+    [[nodiscard]] std::optional<std::filesystem::path> rootFor(const std::string& name) const;
 
-    // Get the path of the currently active workspace
-    std::optional<std::filesystem::path> getActiveWorkspacePath() const;
+    // Resolves `relative_path` against `workspace_root`, guaranteeing the
+    // result stays within the sandbox. Throws std::runtime_error on any
+    // attempt to escape the sandbox (e.g. via "../../" traversal or an
+    // absolute path pointing elsewhere).
+    [[nodiscard]] static std::filesystem::path resolveSafe(
+        const std::filesystem::path& workspace_root,
+        const std::string& relative_path);
 
-    // List all registered workspaces (useful for the API)
-    std::map<std::string, std::filesystem::path> getAllWorkspaces() const;
+    [[nodiscard]] const std::filesystem::path& workspacesRoot() const { return workspaces_root_; }
 
-    // Resolves a path and ensures it strictly resides within the workspace root
-    std::filesystem::path resolveSafePath(const std::string& workspace_name, const std::string& relative_path) const;
 private:
-    std::map<std::string, std::filesystem::path> workspaces_;
-    std::string active_workspace_;
+    std::filesystem::path workspaces_root_;
+    std::unordered_map<std::string, std::filesystem::path> workspaces_;
 };
 
 } // namespace atlas::core

@@ -1,25 +1,26 @@
 cmake_minimum_required(VERSION 3.20)
 project(Atlas VERSION 0.1.0 LANGUAGES CXX)
 
-# Enforce Modern C++20
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Enable standard compiler warnings for project health
-if(MSVC)
-  add_compile_options(/W4 /WX)
-else()
-  add_compile_options(-Wall -Wextra -Wpedantic -Werror)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
 endif()
+
+if(MSVC)
+  add_compile_options(/W4)
+else()
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 include(FetchContent)
 
-# ------------------------------------------------------------------------------
-# Dependencies
-# ------------------------------------------------------------------------------
-
-# 1. nlohmann/json: For JSON file handling and API communication
+# 1. nlohmann/json
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -27,7 +28,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-# 2. standalone Asio: For asynchronous networking and event loops
+# 2. standalone Asio
 FetchContent_Declare(
     asio
     GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
@@ -35,17 +36,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(asio)
 
-# Create an interface target that exposes Asio's nested headers and standalone macro
 add_library(asio_standalone INTERFACE)
 target_include_directories(asio_standalone INTERFACE ${asio_SOURCE_DIR}/asio/include)
 target_compile_definitions(asio_standalone INTERFACE ASIO_STANDALONE)
+target_link_libraries(asio_standalone INTERFACE Threads::Threads)
 
-# Explicitly define the Windows target version for Asio (Windows 10/11)
 if(WIN32)
   target_compile_definitions(asio_standalone INTERFACE _WIN32_WINNT=0x0A00)
 endif()
 
-# 3. cpp-httplib (a lightweight HTTP/HTTPS server and client library)
+# 3. cpp-httplib
 FetchContent_Declare(
   httplib
   GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
@@ -53,11 +53,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
-# ------------------------------------------------------------------------------
-# Atlas Core Library
-# ------------------------------------------------------------------------------
-
-# Explicitly define all core sources to guarantee build inclusion
+# Explicit Core Sources
 set(ATLAS_SOURCES
     src/core/Application.cpp
     src/core/WorkspaceManager.cpp
@@ -72,33 +68,35 @@ set(ATLAS_SOURCES
     src/tools/SearchSymbolTool.cpp
     src/tools/EditFileTool.cpp
     src/tools/WriteFileTool.cpp
+    src/tools/GitTool.cpp
+    src/tools/GitHubPRTool.cpp
 )
 
 add_library(atlas_core ${ATLAS_SOURCES})
 
-# Public includes (what consumers of the library see)
 target_include_directories(atlas_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
-# SINGLE CORRECT LINK COMMAND for dependencies
 target_link_libraries(atlas_core PUBLIC
     nlohmann_json::nlohmann_json
     asio_standalone
     httplib::httplib
+    Threads::Threads
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
-# CRITICAL: Windows networking libraries for httplib and Asio to function
+# GitHubPRTool needs HTTPS (api.github.com); cpp-httplib only compiles in
+# OpenSSL support when this macro is defined before its headers are seen.
+target_compile_definitions(atlas_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+
 if(WIN32)
   target_link_libraries(atlas_core PUBLIC ws2_32 crypt32)
 endif()
 
-# ------------------------------------------------------------------------------
-# Main Executable
-# ------------------------------------------------------------------------------
-
 add_executable(atlas src/main.cpp)
-
-# Link the 'atlas' executable to the 'atlas_core' library
 target_link_libraries(atlas PRIVATE atlas_core)
+
+enable_testing()

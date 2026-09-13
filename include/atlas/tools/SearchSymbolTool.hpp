@@ -1,18 +1,30 @@
 #pragma once
 
-#include "atlas/tools/Tool.hpp"
 #include "atlas/core/SymbolIndexer.hpp"
+#include "atlas/tools/Tool.hpp"
 
 namespace atlas::tools {
 
-class SearchSymbolTool : public Tool {
+// Queries the shared SymbolIndexer for classes/functions/methods whose name
+// matches a substring. This is the "Librarian" entry point agents should
+// reach for before reading whole files.
+class SearchSymbolTool final : public Tool {
 public:
-    explicit SearchSymbolTool(core::SymbolIndexer& indexer);
+    explicit SearchSymbolTool(core::SymbolIndexer& indexer) : indexer_(indexer) {}
 
-    std::string name() const override;
-    std::string description() const override;
-    nlohmann::json parametersSchema() const override;
-    std::string execute(const nlohmann::json& arguments) override;
+    [[nodiscard]] std::string name() const override { return "search_symbol"; }
+
+    [[nodiscard]] std::string description() const override {
+        return "Searches the indexed codebase for classes, structs, functions, "
+               "or methods whose name contains the query string. Returns file "
+               "and line number for each match so you can read_file a small, "
+               "targeted range instead of the whole file.";
+    }
+
+    [[nodiscard]] nlohmann::json parametersSchema() const override;
+
+    [[nodiscard]] nlohmann::json execute(const nlohmann::json& arguments,
+                                          const std::string& workspace_root) const override;
 
 private:
     core::SymbolIndexer& indexer_;

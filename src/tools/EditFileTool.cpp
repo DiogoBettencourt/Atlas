@@ -1,73 +1,78 @@
 #include "atlas/tools/EditFileTool.hpp"
+#include "atlas/core/WorkspaceManager.hpp"
+
 #include <fstream>
 #include <sstream>
 
 namespace atlas::tools {
 
-EditFileTool::EditFileTool(core::WorkspaceManager& workspace_manager)
-    : workspace_manager_(workspace_manager) {}
-
-std::string EditFileTool::name() const {
-    return "edit_file";
-}
-
-std::string EditFileTool::description() const {
-    return "Replaces a specific block of text in an existing file. Exact string matching is used for 'search_string'.";
-}
-
 nlohmann::json EditFileTool::parametersSchema() const {
-    return {
+    return nlohmann::json{
         {"type", "object"},
         {"properties", {
             {"path", {
                 {"type", "string"},
-                {"description", "Relative path to the file."}
+                {"description", "Workspace-relative path to the file to edit."}
             }},
-            {"search_string", {
+            {"old_text", {
                 {"type", "string"},
-                {"description", "The exact block of code to find and replace. Must match the file exactly."}
+                {"description", "Exact text to find. Must appear exactly once in the file."}
             }},
-            {"replace_string", {
+            {"new_text", {
                 {"type", "string"},
-                {"description", "The new code that will replace the search_string."}
+                {"description", "Text to replace old_text with."}
             }}
         }},
-        {"required", nlohmann::json::array({"path", "search_string", "replace_string"})}
+        {"required", nlohmann::json::array({"path", "old_text", "new_text"})}
     };
 }
 
-std::string EditFileTool::execute(const nlohmann::json& arguments) {
-    if (!arguments.contains("path") || !arguments.contains("search_string") || !arguments.contains("replace_string")) {
-        return "Error: Missing parameters.";
+nlohmann::json EditFileTool::execute(const nlohmann::json& arguments,
+                                      const std::string& workspace_root) const {
+    if (!arguments.contains("path") || !arguments.contains("old_text") ||
+        !arguments.contains("new_text")) {
+        return nlohmann::json{{"error", "missing required arguments: path, old_text, new_text"}};
     }
 
     try {
-        auto safe_path = workspace_manager_.resolveSafePath("AtlasCore", arguments["path"]);
+        auto resolved = core::WorkspaceManager::resolveSafe(workspace_root, arguments["path"]);
 
-        std::ifstream in_file(safe_path);
-        if (!in_file.is_open()) return "Error: Could not read file.";
-        
-        std::stringstream buffer;
-        buffer << in_file.rdbuf();
+        std::ifstream in(resolved, std::ios::binary);
+        if (!in) {
+            return nlohmann::json{{"error", "file not found: " + arguments["path"].get<std::string>()}};
+        }
+        std::ostringstream buffer;
+        buffer << in.rdbuf();
         std::string content = buffer.str();
-        in_file.close();
+        in.close();
 
-        std::string search_str = arguments["search_string"];
-        std::string replace_str = arguments["replace_string"];
+        std::string old_text = arguments["old_text"].get<std::string>();
+        std::string new_text = arguments["new_text"].get<std::string>();
 
-        size_t pos = content.find(search_str);
-        if (pos == std::string::npos) {
-            return "Error: search_string not found in file. Ensure exact matching (including whitespace).";
+        std::size_t first = content.find(old_text);
+        if (first == std::string::npos) {
+            return nlohmann::json{{"error", "old_text not found in file"}};
+        }
+        std::size_t second = content.find(old_text, first + 1);
+        if (second != std::string::npos) {
+            return nlohmann::json{{"error", "old_text is not unique in file (matches multiple locations)"}};
         }
 
-        content.replace(pos, search_str.length(), replace_str);
+        content.replace(first, old_text.size(), new_text);
 
-        std::ofstream out_file(safe_path, std::ios::trunc);
-        out_file << content;
-        
-        return "Success: File updated.";
+        std::ofstream out(resolved, std::ios::binary | std::ios::trunc);
+        if (!out) {
+            return nlohmann::json{{"error", "unable to open file for writing"}};
+        }
+        out << content;
+        out.close();
+
+        return nlohmann::json{
+            {"path", arguments["path"]},
+            {"status", "ok"}
+        };
     } catch (const std::exception& e) {
-        return std::string("Error: ") + e.what();
+        return nlohmann::json{{"error", e.what()}};
     }
 }
 

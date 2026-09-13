@@ -1,36 +1,31 @@
 #pragma once
 
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
-#include <nlohmann/json.hpp>
 
 namespace atlas::storage {
 
-/**
- * @brief Abstract interface for Atlas storage mechanisms.
- * * This ensures the core application remains entirely decoupled from
- * the actual persistence layer (e.g., local files, SQLite, or cloud).
- */
+// Abstract persistence interface. Atlas stores everything as
+// human-readable, git-diffable JSON documents identified by a namespaced
+// key (e.g. "sessions/abc123", "workspaces/my-project"). Alternative
+// backends (SQLite, embedded KV store) can implement this same interface
+// without touching call sites in core/.
 class StorageManager {
 public:
-    // Virtual destructor is mandatory for abstract base classes
     virtual ~StorageManager() = default;
 
-    // Initializes the storage (e.g., creating necessary directories or database tables)
-    virtual bool initialize() = 0;
+    virtual void save(const std::string& key, const nlohmann::json& document) = 0;
 
-    // Saves workspace data. Returns true on success.
-    virtual bool saveWorkspace(const std::string& workspace_id, const nlohmann::json& data) = 0;
+    [[nodiscard]] virtual std::optional<nlohmann::json> load(const std::string& key) const = 0;
 
-    // Loads workspace data. Returns std::nullopt if the workspace doesn't exist.
-    virtual std::optional<nlohmann::json> loadWorkspace(const std::string& workspace_id) = 0;
+    [[nodiscard]] virtual bool exists(const std::string& key) const = 0;
 
-    // Returns a list of all available workspace IDs
-    virtual std::vector<std::string> listWorkspaces() = 0;
+    virtual bool remove(const std::string& key) = 0;
 
-    // Deletes a workspace and all its data. Returns true on success.
-    virtual bool deleteWorkspace(const std::string& workspace_id) = 0;
+    // Lists all keys currently stored under `prefix` (e.g. "sessions/").
+    [[nodiscard]] virtual std::vector<std::string> listKeys(const std::string& prefix) const = 0;
 };
 
 } // namespace atlas::storage

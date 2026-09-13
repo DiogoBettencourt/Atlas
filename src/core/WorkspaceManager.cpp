@@ -1,72 +1,70 @@
 #include "atlas/core/WorkspaceManager.hpp"
-#include <iostream>
+
+#include <stdexcept>
 
 namespace atlas::core {
 
-bool WorkspaceManager::addWorkspace(const std::string& name, const std::filesystem::path& root_path) {
-    // Only add if the directory actually exists
-    if (std::filesystem::exists(root_path) && std::filesystem::is_directory(root_path)) {
-        workspaces_[name] = std::filesystem::weakly_canonical(root_path);
-        
-        // If this is the first workspace added, make it active by default
-        if (active_workspace_.empty()) {
-            active_workspace_ = name;
-        }
-        return true;
-    }
-    return false;
+namespace fs = std::filesystem;
+
+WorkspaceManager::WorkspaceManager(fs::path workspaces_root)
+    : workspaces_root_(std::move(workspaces_root)) {
+    std::error_code ec;
+    fs::create_directories(workspaces_root_, ec);
 }
 
-bool WorkspaceManager::removeWorkspace(const std::string& name) {
-    auto it = workspaces_.find(name);
-    if (it != workspaces_.end()) {
-        workspaces_.erase(it);
-        // If we deleted the active workspace, fallback to another one or empty
-        if (active_workspace_ == name) {
-            active_workspace_ = workspaces_.empty() ? "" : workspaces_.begin()->first;
-        }
-        return true;
+fs::path WorkspaceManager::createOrGetWorkspace(const std::string& name,
+                                                 const fs::path& physical_path) {
+    if (auto existing = workspaces_.find(name); existing != workspaces_.end()) {
+        return existing->second;
     }
-    return false;
+
+    fs::path root = physical_path.empty() ? (workspaces_root_ / name) : physical_path;
+    std::error_code ec;
+    fs::create_directories(root, ec);
+    if (ec) {
+        throw std::runtime_error("WorkspaceManager: failed to create workspace '" + name +
+                                  "': " + ec.message());
+    }
+
+    fs::path canonical = fs::weakly_canonical(root);
+    workspaces_.emplace(name, canonical);
+    return canonical;
 }
 
-bool WorkspaceManager::setActiveWorkspace(const std::string& name) {
-    if (workspaces_.find(name) != workspaces_.end()) {
-        active_workspace_ = name;
-        return true;
-    }
-    return false;
-}
-
-std::optional<std::filesystem::path> WorkspaceManager::getActiveWorkspacePath() const {
-    if (active_workspace_.empty()) return std::nullopt;
-    
-    auto it = workspaces_.find(active_workspace_);
-    if (it != workspaces_.end()) {
+std::optional<fs::path> WorkspaceManager::rootFor(const std::string& name) const {
+    if (auto it = workspaces_.find(name); it != workspaces_.end()) {
         return it->second;
     }
     return std::nullopt;
 }
 
-std::map<std::string, std::filesystem::path> WorkspaceManager::getAllWorkspaces() const {
-    return workspaces_;
-}
-
-std::filesystem::path WorkspaceManager::resolveSafePath(const std::string& workspace_name, const std::string& relative_path) const {
-    auto it = workspaces_.find(workspace_name);
-    if (it == workspaces_.end()) {
-        throw std::runtime_error("Workspace not found: " + workspace_name);
+fs::path WorkspaceManager::resolveSafe(const fs::path& workspace_root,
+                                        const std::string& relative_path) {
+    // Disallow absolute inputs outright; every tool-facing path must be
+    // workspace-relative.
+    fs::path requested(relative_path);
+    if (requested.is_absolute()) {
+        throw std::runtime_error("path traversal rejected: absolute paths are not allowed");
     }
 
-    std::filesystem::path root_dir = std::filesystem::canonical(it->second);
-    std::filesystem::path target_path = std::filesystem::weakly_canonical(root_dir / relative_path);
+    fs::path combined = workspace_root / requested;
+    fs::path normalized = fs::weakly_canonical(combined);
+    fs::path canonical_root = fs::weakly_canonical(workspace_root);
 
-    // Sandbox check: Ensure the resolved target path starts with the workspace root path
-    if (target_path.string().find(root_dir.string()) != 0) {
-        throw std::runtime_error("Security Error: Path traversal attempt outside workspace boundaries.");
+    // Ensure normalized path is inside canonical_root (string-prefix check
+    // on the canonical, separator-normalized paths).
+    auto root_str = canonical_root.native();
+    auto norm_str = normalized.native();
+
+    bool within = norm_str.size() >= root_str.size() &&
+                  std::equal(root_str.begin(), root_str.end(), norm_str.begin());
+
+    if (!within) {
+        throw std::runtime_error("path traversal rejected: '" + relative_path +
+                                  "' escapes workspace sandbox");
     }
 
-    return target_path;
+    return normalized;
 }
 
 } // namespace atlas::core

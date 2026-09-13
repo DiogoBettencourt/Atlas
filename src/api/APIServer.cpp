@@ -1,76 +1,65 @@
 #include "atlas/api/APIServer.hpp"
-#include <nlohmann/json.hpp>
+
 #include <iostream>
+#include <nlohmann/json.hpp>
 
 namespace atlas::api {
 
-APIServer::APIServer(agent::Agent& agent, const std::string& host, int port)
-    : agent_(agent), host_(host), port_(port) {
-    setupRoutes();
+APIServer::APIServer(agent::Agent& agent, core::WorkspaceManager& workspace_manager,
+                      std::string bind_address, int port)
+    : agent_(agent),
+      workspace_manager_(workspace_manager),
+      bind_address_(std::move(bind_address)),
+      port_(port) {
+    registerRoutes();
 }
 
-APIServer::~APIServer() {
-    stop();
-}
+void APIServer::registerRoutes() {
+    server_.Get("/health", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content(nlohmann::json{{"status", "ok"}}.dump(), "application/json");
+    });
 
-void APIServer::setupRoutes() {
     server_.Post("/chat", [this](const httplib::Request& req, httplib::Response& res) {
-        try {
-            auto json_req = nlohmann::json::parse(req.body);
-            
-            if (!json_req.contains("message") || !json_req["message"].is_string()) {
-                res.status = 400;
-                res.set_content(R"({"error": "Missing or invalid 'message' field."})", "application/json");
-                return;
-            }
-
-            std::string user_message = json_req["message"];
-            
-            std::string session_id;
-            if (json_req.contains("session_id") && json_req["session_id"].is_string() && !json_req["session_id"].get<std::string>().empty()) {
-                session_id = json_req["session_id"].get<std::string>();
-            } else {
-                session_id = agent_.getSessionManager().createSession();
-            }
-
-            std::cout << "\n[API] Received message for session: " << session_id << "\n";
-
-            std::string agent_response = agent_.chat(user_message, session_id);
-
-            nlohmann::json json_res = {
-                {"session_id", session_id},
-                {"response", agent_response}
-            };
-            res.set_content(json_res.dump(), "application/json");
-            
-        } catch (const nlohmann::json::parse_error&) {
+        auto body = nlohmann::json::parse(req.body, nullptr, false);
+        if (body.is_discarded() || !body.contains("message") || !body.contains("session_id")) {
             res.status = 400;
-            res.set_content(R"({"error": "Invalid JSON format."})", "application/json");
+            res.set_content(
+                nlohmann::json{{"error", "expected JSON body: {session_id, message, workspace?}"}}
+                    .dump(),
+                "application/json");
+            return;
+        }
+
+        std::string session_id = body["session_id"].get<std::string>();
+        std::string message = body["message"].get<std::string>();
+        std::string workspace_name = body.value("workspace", std::string("default"));
+
+        try {
+            std::filesystem::path workspace_root =
+                workspace_manager_.createOrGetWorkspace(workspace_name);
+            std::string reply = agent_.chat(message, session_id, workspace_root.string());
+
+            res.set_content(
+                nlohmann::json{{"session_id", session_id}, {"reply", reply}}.dump(),
+                "application/json");
         } catch (const std::exception& e) {
             res.status = 500;
-            res.set_content(R"({"error": "Internal server error."})", "application/json");
-            std::cerr << "API Error: " << e.what() << "\n";
+            res.set_content(nlohmann::json{{"error", e.what()}}.dump(), "application/json");
         }
     });
 }
 
-void APIServer::start() {
-    std::cout << "Starting API Server on http://" << host_ << ":" << port_ << "\n";
-    
-    // FIX: Use std::make_unique to assign the thread to the pointer
-    server_thread_ = std::make_unique<std::thread>([this]() {
-        server_.listen(host_, port_);
-    });
+void APIServer::run() {
+    std::cout << "Atlas API server listening on http://" << bind_address_ << ":" << port_
+              << " (POST /chat, GET /health)" << std::endl;
+    if (!server_.listen(bind_address_, port_)) {
+        throw std::runtime_error("APIServer: failed to bind " + bind_address_ + ":" +
+                                  std::to_string(port_));
+    }
 }
 
 void APIServer::stop() {
-    if (server_.is_running()) {
-        server_.stop();
-    }
-    // FIX: Check if the pointer exists AND if the thread is joinable
-    if (server_thread_ && server_thread_->joinable()) {
-        server_thread_->join();
-    }
+    server_.stop();
 }
 
 } // namespace atlas::api
