@@ -25,7 +25,7 @@ std::string argOr(int argc, char* argv[], const std::string& key, const std::str
 
 nlohmann::json Application::buildConfig(int argc, char* argv[]) {
     nlohmann::json config;
-    config["model"] = argOr(argc, argv, "model", "qwen2.5-coder:14b");
+    config["model"] = argOr(argc, argv, "model", "qwen3:14b");
     config["port"] = std::stoi(argOr(argc, argv, "port", "8080"));
     config["bind_address"] = argOr(argc, argv, "bind", "127.0.0.1");
     config["data_dir"] = argOr(argc, argv, "data-dir", "./atlas_data/storage");
