@@ -3,6 +3,7 @@
 #include "atlas/agent/LLMClient.hpp"
 #include "atlas/core/SessionManager.hpp"
 #include "atlas/tools/ToolManager.hpp"
+#include <functional>
 #include <string>
 
 namespace atlas::agent {
@@ -13,6 +14,15 @@ namespace atlas::agent {
 // final answer or a loop-guard iteration limit is hit.
 class Agent {
 public:
+    // Invoked synchronously, on the calling thread, once per notable event
+    // during the loop - e.g. {"type":"tool_call","name":"read_file",
+    // "arguments":{...}} or {"type":"tool_result","name":"read_file",
+    // "result":{...}}. Lets a caller show live progress (a streaming HTTP
+    // response, a CLI spinner, etc.) instead of waiting silently for the
+    // whole loop to finish. Never called from a background thread, so it's
+    // safe for the callback to write directly to a socket/console.
+    using EventCallback = std::function<void(const nlohmann::json&)>;
+
     Agent(LLMClient& llm_client,
           tools::ToolManager& tool_manager,
           core::SessionManager& session_manager,
@@ -25,10 +35,13 @@ public:
 
     // Runs the ReAct loop for `session_id`, sandboxing any tool file
     // operations to `workspace_root`. Returns the assistant's final
-    // natural-language reply.
+    // natural-language reply. If `on_event` is set, it's called for every
+    // tool call issued and every tool result received, in order, before
+    // this function returns the final reply.
     [[nodiscard]] std::string chat(const std::string& message,
                                     const std::string& session_id,
-                                    const std::string& workspace_root = ".");
+                                    const std::string& workspace_root = ".",
+                                    const EventCallback& on_event = {});
 
     void setMaxIterations(unsigned int max_iterations) { max_iterations_ = max_iterations; }
 

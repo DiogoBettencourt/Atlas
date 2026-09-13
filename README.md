@@ -76,14 +76,64 @@ Response:
 ```json
 {
   "session_id": "any-string-you-choose",
-  "reply": "..."
+  "reply": "...",
+  "steps": [
+    {"type": "assistant_thought", "content": "I'll check the file first."},
+    {"type": "tool_call", "name": "read_file", "arguments": {"path": "hello.txt"}},
+    {"type": "tool_result", "name": "read_file", "result": {"content": "...", "truncated": false}}
+  ]
+}
+```
+`steps` is the full trace of what the agent did to arrive at `reply` —
+every tool call it made and every result it got back, in order. This
+endpoint still blocks until the whole loop finishes; use `/chat/stream`
+below if you want to see steps arrive live instead of all at once at the
+end.
+
+### `POST /chat/stream`
+Same request body as `/chat`. Instead of one JSON object, the response is
+newline-delimited JSON (NDJSON) — one `{"type": ...}` line per event,
+written to the connection as the agent produces it, ending in a `final` or
+`error` line:
+
+```
+{"type":"iteration_start","iteration":1,"max_iterations":20}
+{"type":"assistant_thought","content":"I'll check the file first."}
+{"type":"tool_call","name":"read_file","arguments":{"path":"hello.txt"}}
+{"type":"tool_result","name":"read_file","result":{"content":"...","truncated":false}}
+{"type":"iteration_start","iteration":2,"max_iterations":20}
+{"type":"final","reply":"Done — the file says hello."}
+```
+
+**This only shows up live if your client reads the body incrementally.**
+`Invoke-RestMethod` in PowerShell buffers the whole response before
+returning anything, so it'll look identical to a slow `/chat` call. To see
+it stream, either use `curl.exe` (ships with modern Windows):
+
+```powershell
+curl.exe -N -X POST http://127.0.0.1:8080/chat/stream `
+  -H "Content-Type: application/json" `
+  -d '{\"session_id\":\"s1\",\"message\":\"read hello.txt\"}'
+```
+
+or read the .NET `HttpClient` response stream directly in PowerShell:
+
+```powershell
+$body = '{"session_id":"s1","message":"read hello.txt"}'
+$client = [System.Net.Http.HttpClient]::new()
+$content = [System.Net.Http.StringContent]::new($body, [System.Text.Encoding]::UTF8, "application/json")
+$response = $client.PostAsync("http://127.0.0.1:8080/chat/stream", $content).Result
+$stream = $response.Content.ReadAsStreamAsync().Result
+$reader = [System.IO.StreamReader]::new($stream)
+while (-not $reader.EndOfStream) {
+    Write-Host $reader.ReadLine()
 }
 ```
 
+## Built-in tools
+
 Chat history is persisted per `session_id` as JSON under
 `<data-dir>/sessions/<session_id>.json`, so conversations survive restarts.
-
-## Built-in tools
 
 The agent has six tools available on every turn:
 

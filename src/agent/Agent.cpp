@@ -45,17 +45,28 @@ nlohmann::json Agent::extractToolCalls(const nlohmann::json& assistant_message) 
 
 std::string Agent::chat(const std::string& message,
                          const std::string& session_id,
-                         const std::string& workspace_root) {
+                         const std::string& workspace_root,
+                         const EventCallback& on_event) {
+    // Firing an event when there's no listener would just build JSON for
+    // nothing on every step of every request, so make it a genuine no-op.
+    auto emit = [&on_event](const nlohmann::json& event) {
+        if (on_event) on_event(event);
+    };
+
     session_manager_.appendMessage(session_id, {{"role", "user"}, {"content", message}});
 
     for (unsigned int iteration = 0; iteration < max_iterations_; ++iteration) {
+        emit({{"type", "iteration_start"}, {"iteration", iteration + 1}, {"max_iterations", max_iterations_}});
+
         nlohmann::json history = session_manager_.getHistory(session_id);
 
         nlohmann::json assistant_message;
         try {
             assistant_message = llm_client_.chat(model_name_, history, tool_manager_.schemasJson());
         } catch (const std::exception& e) {
-            return std::string("Agent error: ") + e.what();
+            std::string error_msg = std::string("Agent error: ") + e.what();
+            emit({{"type", "error"}, {"message", error_msg}});
+            return error_msg;
         }
 
         // Persist the assistant turn (even if it also contains tool calls)
@@ -64,7 +75,17 @@ std::string Agent::chat(const std::string& message,
 
         nlohmann::json tool_calls = extractToolCalls(assistant_message);
         if (tool_calls.empty()) {
-            return assistant_message.value("content", std::string{});
+            std::string reply = assistant_message.value("content", std::string{});
+            emit({{"type", "final"}, {"reply", reply}});
+            return reply;
+        }
+
+        // Some models narrate their plan in `content` alongside the tool
+        // call itself (rather than leaving it empty) - surface that too so
+        // a live viewer sees the model's reasoning, not just raw tool I/O.
+        std::string interim_content = assistant_message.value("content", std::string{});
+        if (!interim_content.empty()) {
+            emit({{"type", "assistant_thought"}, {"content", interim_content}});
         }
 
         for (const auto& call : tool_calls) {
@@ -84,9 +105,13 @@ std::string Agent::chat(const std::string& message,
                 }
             }
 
+            emit({{"type", "tool_call"}, {"name", tool_name}, {"arguments", arguments}});
+
             nlohmann::json result = tool_name.empty()
                 ? nlohmann::json{{"error", "malformed tool call: missing function name"}}
                 : tool_manager_.execute(tool_name, arguments, workspace_root);
+
+            emit({{"type", "tool_result"}, {"name", tool_name}, {"result", result}});
 
             nlohmann::json tool_message{
                 {"role", "tool"},
@@ -100,8 +125,10 @@ std::string Agent::chat(const std::string& message,
         // Loop again so the model can react to the tool results.
     }
 
-    return "Agent stopped: exceeded maximum tool-call iterations ("
+    std::string give_up = "Agent stopped: exceeded maximum tool-call iterations ("
            + std::to_string(max_iterations_) + ") without a final answer.";
+    emit({{"type", "error"}, {"message", give_up}});
+    return give_up;
 }
 
 } // namespace atlas::agent
