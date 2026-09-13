@@ -9,12 +9,13 @@ dump whole repositories into context.
 ## Requirements
 
 - CMake >= 3.20
-- A C++20 compiler (GCC 11+, Clang 14+, or MSVC 2022+)
-- OpenSSL development headers (`libssl-dev` on Debian/Ubuntu) — needed for
-  HTTPS support in cpp-httplib, used by the `github_pr` tool to talk to
-  `api.github.com`.
-- A POSIX platform (Linux/macOS) for the `git` tool, which shells out via
-  `fork()`/`execvp()`. Not currently supported on Windows.
+- A C++20 compiler (GCC 11+, Clang 14+, MSVC 2019+)
+- OpenSSL development headers — optional, only needed for the `github_pr`
+  tool's HTTPS calls to `api.github.com`. If CMake can't find OpenSSL,
+  Atlas still builds and runs; `github_pr` just self-disables with a clear
+  error at runtime. On Windows, the easiest path is
+  `vcpkg install openssl:x64-windows` and pointing CMake at vcpkg's
+  toolchain file; on Debian/Ubuntu, `apt install libssl-dev`.
 - [Ollama](https://ollama.com) running locally, with a model pulled, e.g.:
 
   ```bash

@@ -2,10 +2,16 @@
 
 #include <array>
 #include <cstring>
-#include <fcntl.h>
 #include <regex>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 namespace atlas::tools {
 
@@ -24,6 +30,44 @@ bool isValidBranchName(const std::string& name) {
     if (name.find("..") != std::string::npos) return false;
     return std::regex_match(name, valid);
 }
+
+#if defined(_WIN32)
+// Quotes a single argument per the rules CommandLineToArgvW (and every
+// well-behaved Windows C runtime) uses to split a command line back into
+// argv, so building the command line here and having git.exe's CRT parse
+// it back apart round-trips exactly - this is what keeps arguments from
+// smuggling extra "arguments" the way naive quoting would. Based on the
+// well-known algorithm Microsoft documents for this exact purpose (also
+// used by e.g. Python's subprocess.list2cmdline).
+std::string quoteWindowsArg(const std::string& arg) {
+    if (!arg.empty() && arg.find_first_of(" \t\n\v\"") == std::string::npos) {
+        return arg; // no special characters, no quoting needed
+    }
+
+    std::string out = "\"";
+    for (auto it = arg.begin();; ++it) {
+        std::size_t backslashes = 0;
+        while (it != arg.end() && *it == '\\') {
+            ++it;
+            ++backslashes;
+        }
+
+        if (it == arg.end()) {
+            out.append(backslashes * 2, '\\');
+            break;
+        }
+        if (*it == '"') {
+            out.append(backslashes * 2 + 1, '\\');
+            out.push_back('"');
+        } else {
+            out.append(backslashes, '\\');
+            out.push_back(*it);
+        }
+    }
+    out.push_back('"');
+    return out;
+}
+#endif
 
 } // namespace
 
@@ -77,6 +121,90 @@ std::string GitTool::currentBranch() const {
     }
     return branch;
 }
+
+#if defined(_WIN32)
+
+nlohmann::json GitTool::runGit(const std::vector<std::string>& args) const {
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    HANDLE read_handle = nullptr;
+    HANDLE write_handle = nullptr;
+    if (!CreatePipe(&read_handle, &write_handle, &sa, 0)) {
+        return nlohmann::json{{"exit_code", -1}, {"output", "CreatePipe() failed"}};
+    }
+    // Only the child should inherit the write end.
+    SetHandleInformation(read_handle, HANDLE_FLAG_INHERIT, 0);
+
+    // Build "git.exe" arg1 arg2 ... as a single command line, quoting each
+    // argument so the started process's own argv parsing round-trips it
+    // exactly - never invoking cmd.exe, so no shell metacharacter
+    // interpretation happens at any point.
+    std::string command_line = "git.exe";
+    for (const auto& arg : args) {
+        command_line += ' ';
+        command_line += quoteWindowsArg(arg);
+    }
+
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    si.dwFlags |= STARTF_USESTDHANDLES;
+    si.hStdOutput = write_handle;
+    si.hStdError = write_handle;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+    PROCESS_INFORMATION pi{};
+    std::string cwd = allowed_repo_root_.string();
+
+    // CreateProcessA requires a mutable command-line buffer.
+    std::vector<char> mutable_cmd(command_line.begin(), command_line.end());
+    mutable_cmd.push_back('\0');
+
+    BOOL ok = CreateProcessA(
+        nullptr,               // resolve "git.exe" via PATH, not a fixed module path
+        mutable_cmd.data(),
+        nullptr, nullptr,
+        TRUE,                  // inherit handles (needed for the pipe)
+        0,
+        nullptr,                // inherit parent's environment
+        cwd.c_str(),
+        &si, &pi);
+
+    CloseHandle(write_handle);
+
+    if (!ok) {
+        CloseHandle(read_handle);
+        return nlohmann::json{{"exit_code", -1}, {"output", "CreateProcess() failed to launch git.exe"}};
+    }
+
+    std::string output;
+    std::array<char, 4096> buffer{};
+    DWORD bytes_read = 0;
+    while (ReadFile(read_handle, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, nullptr) &&
+           bytes_read > 0) {
+        output.append(buffer.data(), bytes_read);
+    }
+    CloseHandle(read_handle);
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 0;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
+    constexpr std::size_t kMaxOutput = 16 * 1024;
+    bool truncated = false;
+    if (output.size() > kMaxOutput) {
+        output = output.substr(0, kMaxOutput);
+        truncated = true;
+    }
+
+    return nlohmann::json{
+        {"exit_code", static_cast<int>(exit_code)}, {"output", output}, {"truncated", truncated}};
+}
+
+#else
 
 nlohmann::json GitTool::runGit(const std::vector<std::string>& args) const {
     int stdout_pipe[2];
@@ -138,6 +266,8 @@ nlohmann::json GitTool::runGit(const std::vector<std::string>& args) const {
 
     return nlohmann::json{{"exit_code", exit_code}, {"output", output}, {"truncated", truncated}};
 }
+
+#endif
 
 nlohmann::json GitTool::execute(const nlohmann::json& arguments,
                                  const std::string& workspace_root) const {

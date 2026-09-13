@@ -16,7 +16,15 @@ else()
 endif()
 
 find_package(Threads REQUIRED)
-find_package(OpenSSL REQUIRED)
+
+# OpenSSL is optional: only the github_pr tool needs HTTPS. If it's not
+# found (common on a fresh Windows machine with no OpenSSL install), the
+# rest of Atlas still builds and runs fine - github_pr just self-disables
+# with a clear error at runtime instead of failing the whole build.
+# To enable it on Windows: `vcpkg install openssl:x64-windows` then
+# re-run cmake with `-DCMAKE_TOOLCHAIN_FILE=<vcpkg root>/scripts/buildsystems/vcpkg.cmake`,
+# or install OpenSSL and pass -DOPENSSL_ROOT_DIR=<path>.
+find_package(OpenSSL QUIET)
 
 include(FetchContent)
 
@@ -84,13 +92,19 @@ target_link_libraries(atlas_core PUBLIC
     asio_standalone
     httplib::httplib
     Threads::Threads
-    OpenSSL::SSL
-    OpenSSL::Crypto
 )
 
-# GitHubPRTool needs HTTPS (api.github.com); cpp-httplib only compiles in
-# OpenSSL support when this macro is defined before its headers are seen.
-target_compile_definitions(atlas_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+if(OPENSSL_FOUND)
+  target_link_libraries(atlas_core PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+  # GitHubPRTool needs HTTPS (api.github.com); cpp-httplib only compiles in
+  # OpenSSL support (httplib::SSLClient) when this macro is defined before
+  # its headers are seen.
+  target_compile_definitions(atlas_core PUBLIC CPPHTTPLIB_OPENSSL_SUPPORT)
+else()
+  message(STATUS "OpenSSL not found: building WITHOUT HTTPS support. "
+                  "The github_pr tool will compile but always return an error at runtime. "
+                  "See the comment near find_package(OpenSSL) above to enable it.")
+endif()
 
 if(WIN32)
   target_link_libraries(atlas_core PUBLIC ws2_32 crypt32)

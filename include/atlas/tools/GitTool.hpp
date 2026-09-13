@@ -15,9 +15,10 @@ namespace atlas::tools {
 //     refusal, so a normal user workspace can never trigger a git push.
 //   - checkout_branch refuses "main"/"master"/"HEAD" as a target name.
 //   - push refuses to push while HEAD is on "main" or "master".
-//   - Every git invocation runs via fork()+execvp() with an explicit argv
-//     array - never a shell - so arguments from the LLM cannot be used for
-//     shell injection regardless of their content.
+//   - Every git invocation runs via fork()+execvp() on POSIX or
+//     CreateProcess() on Windows with an explicit, individually-quoted
+//     argument list - never a shell (cmd.exe/sh) - so arguments from the
+//     LLM cannot be used for shell injection regardless of their content.
 //   - If `allowed_repo_root` is empty, the tool is fully disabled and
 //     always returns an error explaining how to enable it.
 class GitTool final : public Tool {

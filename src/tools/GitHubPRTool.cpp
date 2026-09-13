@@ -9,12 +9,14 @@ namespace atlas::tools {
 namespace fs = std::filesystem;
 
 namespace {
+#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
 bool isValidBranchName(const std::string& name) {
     static const std::regex valid(R"(^[A-Za-z0-9][A-Za-z0-9._/-]*$)");
     if (name.empty() || name.size() > 200) return false;
     if (name.find("..") != std::string::npos) return false;
     return std::regex_match(name, valid);
 }
+#endif
 } // namespace
 
 GitHubPRTool::GitHubPRTool(fs::path allowed_repo_root, std::string github_repo)
@@ -47,6 +49,17 @@ nlohmann::json GitHubPRTool::parametersSchema() const {
 
 nlohmann::json GitHubPRTool::execute(const nlohmann::json& arguments,
                                       const std::string& workspace_root) const {
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+    // Built without OpenSSL (see CMakeLists.txt) - httplib::SSLClient isn't
+    // even compiled in, so there's nothing this tool can do. Fail loudly
+    // and specifically rather than trying a plain-HTTP fallback to
+    // api.github.com, which would send the token in the clear.
+    (void)arguments;
+    (void)workspace_root;
+    return nlohmann::json{{"error",
+        "github_pr tool unavailable: Atlas was built without OpenSSL/HTTPS support. "
+        "Install OpenSSL and re-run cmake (see CMakeLists.txt) to enable it."}};
+#else
     if (allowed_repo_root_.empty() || github_repo_.empty()) {
         return nlohmann::json{{"error",
             "github_pr tool is disabled: start Atlas with --self-repo=<path> and "
@@ -117,6 +130,7 @@ nlohmann::json GitHubPRTool::execute(const nlohmann::json& arguments,
     return nlohmann::json{
         {"error", "GitHub API returned HTTP " + std::to_string(response->status) + ": " + message}
     };
+#endif
 }
 
 } // namespace atlas::tools
