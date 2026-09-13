@@ -3,6 +3,8 @@
 #include "atlas/tools/ReadFileTool.hpp"
 #include "atlas/tools/SearchSymbolTool.hpp"
 #include "atlas/core/SymbolIndexer.hpp"
+#include "atlas/tools/WriteFileTool.hpp"
+#include "atlas/tools/EditFileTool.hpp"
 #include <iostream>
 #include <windows.h> // For GetModuleFileName
 #include <stdexcept>
@@ -38,6 +40,9 @@ Application::Application(int /*argc*/, char* /*argv*/[])
     // ADD THIS LINE:
     tool_manager_.registerTool(std::make_unique<atlas::tools::SearchSymbolTool>(symbol_indexer_));
 
+    tool_manager_.registerTool(std::make_unique<atlas::tools::WriteFileTool>(workspace_manager_));
+    tool_manager_.registerTool(std::make_unique<atlas::tools::EditFileTool>(workspace_manager_));
+    
     setupSignalHandling();
 }
 

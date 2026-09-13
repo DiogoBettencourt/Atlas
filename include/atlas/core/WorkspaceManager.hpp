@@ -26,6 +26,8 @@ public:
     // List all registered workspaces (useful for the API)
     std::map<std::string, std::filesystem::path> getAllWorkspaces() const;
 
+    // Resolves a path and ensures it strictly resides within the workspace root
+    std::filesystem::path resolveSafePath(const std::string& workspace_name, const std::string& relative_path) const;
 private:
     std::map<std::string, std::filesystem::path> workspaces_;
     std::string active_workspace_;

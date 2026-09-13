@@ -52,4 +52,21 @@ std::map<std::string, std::filesystem::path> WorkspaceManager::getAllWorkspaces(
     return workspaces_;
 }
 
+std::filesystem::path WorkspaceManager::resolveSafePath(const std::string& workspace_name, const std::string& relative_path) const {
+    auto it = workspaces_.find(workspace_name);
+    if (it == workspaces_.end()) {
+        throw std::runtime_error("Workspace not found: " + workspace_name);
+    }
+
+    std::filesystem::path root_dir = std::filesystem::canonical(it->second);
+    std::filesystem::path target_path = std::filesystem::weakly_canonical(root_dir / relative_path);
+
+    // Sandbox check: Ensure the resolved target path starts with the workspace root path
+    if (target_path.string().find(root_dir.string()) != 0) {
+        throw std::runtime_error("Security Error: Path traversal attempt outside workspace boundaries.");
+    }
+
+    return target_path;
+}
+
 } // namespace atlas::core

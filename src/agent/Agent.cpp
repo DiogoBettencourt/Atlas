@@ -1,5 +1,6 @@
 #include "atlas/agent/Agent.hpp"
 #include <iostream>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 namespace atlas::agent {
@@ -18,10 +19,10 @@ std::string Agent::chat(const std::string& message, const std::string& session_i
     session_manager_.appendMessage(session_id, "user", message);
 
     int iterations = 0;
-    const int MAX_ITERATIONS = 5; // Loop guard to prevent infinite tool execution
+    const int MAX_ITERATIONS = 10; // Expanded loop guard to support multi-file writing
 
     while (iterations < MAX_ITERATIONS) {
-        // 2. Fetch the up-to-date history for this specific session
+        // 2. Fetch up-to-date history for this session
         auto history_opt = session_manager_.getSessionHistory(session_id);
         if (!history_opt) {
             return "Error: Invalid session ID.";
@@ -30,16 +31,47 @@ std::string Agent::chat(const std::string& message, const std::string& session_i
         // 3. Send history to the LLM
         std::string response = llm_client_.generateResponse(*history_opt, model_name_, tool_manager_.getToolSchemas());
 
-        // 4. Parse Tool Calls
-        // (This block safely checks if the model returned a JSON tool invocation instead of plain text)
+        if (response.empty()) {
+            return "Error: Received empty response from LLM.";
+        }
+
+        // 4. Parse Tool Calls & Fallback Extraction for Markdown Leaks
         bool used_tool = false;
         std::string tool_name;
         nlohmann::json tool_args;
+        std::string candidate_json = response;
 
+        // Fallback Step A: Extract JSON from markdown fences if present
+        size_t json_start = candidate_json.find("```json");
+        if (json_start != std::string::npos) {
+            json_start += 7; 
+            size_t json_end = candidate_json.find("```", json_start);
+            if (json_end != std::string::npos) {
+                candidate_json = candidate_json.substr(json_start, json_end - json_start);
+            }
+        } else {
+            // Fallback for generic markdown code fences
+            size_t generic_start = candidate_json.find("```");
+            if (generic_start != std::string::npos) {
+                generic_start += 3;
+                size_t generic_end = candidate_json.find("```", generic_start);
+                if (generic_end != std::string::npos) {
+                    candidate_json = candidate_json.substr(generic_start, generic_end - generic_start);
+                }
+            }
+        }
+
+        // Fallback Step B: Trim leading and trailing whitespace/newlines
+        size_t first_valid = candidate_json.find_first_not_of(" \t\n\r");
+        size_t last_valid = candidate_json.find_last_not_of(" \t\n\r");
+        if (first_valid != std::string::npos && last_valid != std::string::npos) {
+            candidate_json = candidate_json.substr(first_valid, (last_valid - first_valid + 1));
+        }
+
+        // Fallback Step C: Validate standard JSON object structure
         try {
-            // Basic heuristic: if it looks like a JSON object, attempt to parse it
-            if (!response.empty() && response.front() == '{' && response.back() == '}') {
-                auto json_res = nlohmann::json::parse(response);
+            if (!candidate_json.empty() && candidate_json.front() == '{' && candidate_json.back() == '}') {
+                auto json_res = nlohmann::json::parse(candidate_json);
                 if (json_res.contains("name") && json_res.contains("arguments")) {
                     used_tool = true;
                     tool_name = json_res["name"].get<std::string>();
@@ -47,7 +79,7 @@ std::string Agent::chat(const std::string& message, const std::string& session_i
                 }
             }
         } catch (...) {
-            // Not a JSON tool call, treat as a standard text response
+            // Not a valid tool-call payload; proceed as standard text response
             used_tool = false;
         }
 
@@ -57,22 +89,23 @@ std::string Agent::chat(const std::string& message, const std::string& session_i
             return response;
         }
 
-        // 6. If tools ARE used, execute them
+        // 6. Execute Tool
         std::cout << "\n   [Atlas is using tool: " << tool_name << "]\n";
 
-        // Append the LLM's thought process/tool request to history
+        // Record the LLM's invocation step into the history
         session_manager_.appendMessage(session_id, "assistant", response);
 
-        // Execute the tool via ToolManager
         std::string tool_result;
         try {
-            // Note: If your ToolManager uses a different execution signature, adjust this line
             tool_result = tool_manager_.executeTool(tool_name, tool_args); 
         } catch (const std::exception& e) {
             tool_result = "Tool Execution Error: " + std::string(e.what());
         }
 
-        // Append the result back as a user/system message for the next reasoning loop
+        // Output partial tool result to the server terminal for debugging
+        std::cout << "   [Tool Output]: " << tool_result.substr(0, std::min<size_t>(tool_result.length(), 100)) << "...\n";
+
+        // Feed tool results back into history for the next iteration step
         session_manager_.appendMessage(session_id, "user", "Tool Result:\n" + tool_result);
 
         iterations++;

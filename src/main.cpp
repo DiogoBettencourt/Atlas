@@ -18,7 +18,7 @@ int main(int argc, char* argv[]) {
             llm_client, 
             app.getToolManager(), 
             app.getSessionManager(), // <--- THIS IS THE MISSING ARGUMENT
-            "gemma4:e4b"
+            "qwen2.5-coder:14b"
         );
 
         // 4. Initialize and start the API Server

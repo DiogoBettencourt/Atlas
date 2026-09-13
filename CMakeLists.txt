@@ -57,8 +57,22 @@ FetchContent_MakeAvailable(httplib)
 # Atlas Core Library
 # ------------------------------------------------------------------------------
 
-# Gather source files
-file(GLOB_RECURSE ATLAS_SOURCES "src/core/*.cpp" "src/storage/*.cpp" "src/tools/*.cpp" "src/agent/*.cpp" "src/api/*.cpp")
+# Explicitly define all core sources to guarantee build inclusion
+set(ATLAS_SOURCES
+    src/core/Application.cpp
+    src/core/WorkspaceManager.cpp
+    src/core/SessionManager.cpp
+    src/core/SymbolIndexer.cpp
+    src/storage/FileStorageManager.cpp
+    src/agent/Agent.cpp
+    src/agent/LLMClient.cpp
+    src/api/APIServer.cpp
+    src/tools/ToolManager.cpp
+    src/tools/ReadFileTool.cpp
+    src/tools/SearchSymbolTool.cpp
+    src/tools/EditFileTool.cpp
+    src/tools/WriteFileTool.cpp
+)
 
 add_library(atlas_core ${ATLAS_SOURCES})
 
@@ -86,5 +100,5 @@ endif()
 
 add_executable(atlas src/main.cpp)
 
-# ARCHITECT FIX: Link the 'atlas' executable to the 'atlas_core' library
+# Link the 'atlas' executable to the 'atlas_core' library
 target_link_libraries(atlas PRIVATE atlas_core)

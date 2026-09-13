@@ -14,10 +14,14 @@ public:
           core::SessionManager& session_manager, 
           const std::string& model_name);
 
-    // Main interaction endpoint
+    Agent(const Agent&) = delete;
+    Agent& operator=(const Agent&) = delete;
+    Agent(Agent&&) = delete;
+    Agent& operator=(Agent&&) = delete;
+
     std::string chat(const std::string& message, const std::string& session_id);
 
-    // Required by APIServer to auto-create sessions if none is provided in the request
+    // ARCHITECT FIX: Expose the session manager to the API Server
     core::SessionManager& getSessionManager() { return session_manager_; }
 
 private:
