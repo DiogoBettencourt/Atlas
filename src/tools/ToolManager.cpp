@@ -3,6 +3,7 @@
 #include "atlas/tools/EditFileTool.hpp"
 #include "atlas/tools/GitHubPRTool.hpp"
 #include "atlas/tools/GitTool.hpp"
+#include "atlas/tools/ListDirectoryTool.hpp"
 #include "atlas/tools/ReadFileTool.hpp"
 #include "atlas/tools/SearchSymbolTool.hpp"
 #include "atlas/tools/WriteFileTool.hpp"
@@ -21,6 +22,7 @@ void ToolManager::registerDefaultTools(core::SymbolIndexer& indexer,
                                         const std::string& self_repo_root,
                                         const std::string& github_repo) {
     registerTool(std::make_unique<ReadFileTool>());
+    registerTool(std::make_unique<ListDirectoryTool>());
     registerTool(std::make_unique<WriteFileTool>());
     registerTool(std::make_unique<EditFileTool>());
     registerTool(std::make_unique<SearchSymbolTool>(indexer));

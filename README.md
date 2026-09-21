@@ -135,16 +135,17 @@ while (-not $reader.EndOfStream) {
 Chat history is persisted per `session_id` as JSON under
 `<data-dir>/sessions/<session_id>.json`, so conversations survive restarts.
 
-The agent has six tools available on every turn:
+The agent has seven tools available on every turn:
 
-| Tool            | Purpose                                                        |
-|-----------------|------------------------------------------------------------------|
-| `search_symbol` | Find classes/functions/methods by name across the indexed workspace |
-| `read_file`     | Read a workspace-relative file (truncated past 32KB)             |
-| `write_file`    | Create or fully overwrite a workspace-relative file               |
-| `edit_file`     | Exact, unique find-and-replace edit within an existing file       |
-| `git`           | Restricted git ops (`status`/`diff`/`add`/`commit`/`checkout_branch`/`push`) — self-repo only |
-| `github_pr`     | Opens a GitHub pull request from a pushed branch — self-repo only |
+| Tool             | Purpose                                                        |
+|------------------|------------------------------------------------------------------|
+| `list_directory` | List a workspace-relative directory's immediate contents (one level) |
+| `search_symbol`  | Find classes/functions/methods by name across the indexed workspace |
+| `read_file`      | Read a workspace-relative file (truncated past 32KB)             |
+| `write_file`     | Create or fully overwrite a workspace-relative file               |
+| `edit_file`      | Exact, unique find-and-replace edit within an existing file       |
+| `git`            | Restricted git ops (`status`/`diff`/`add`/`commit`/`checkout_branch`/`push`/`pull`) — self-repo only |
+| `github_pr`      | Opens a GitHub pull request from a pushed branch — self-repo only |
 
 All file tools are sandboxed to the active workspace root via
 `WorkspaceManager::resolveSafe`, which rejects absolute paths and any
@@ -178,11 +179,11 @@ use it, point requests at the self workspace:
 }
 ```
 
-Typical flow the agent follows: `search_symbol`/`read_file` to find the
-code → `edit_file` to change it → `git checkout_branch` (feature branch;
-`main`/`master` are hard-blocked) → `git add` → `git commit` → `git push`
-(refuses if somehow still on `main`) → `github_pr` to open the PR for a
-human to review.
+Typical flow the agent follows: `git pull` to sync with the remote →
+`list_directory`/`search_symbol`/`read_file` to find the code → `edit_file`
+to change it → `git checkout_branch` (feature branch; `main`/`master` are
+hard-blocked) → `git add` → `git commit` → `git push` (refuses if somehow
+still on `main`) → `github_pr` to open the PR for a human to review.
 
 **Safety properties, by construction, not just prompting:**
 - `git`/`github_pr` are inert (return a clear error) unless `--self-repo`

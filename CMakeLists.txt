@@ -73,6 +73,7 @@ set(ATLAS_SOURCES
     src/api/APIServer.cpp
     src/tools/ToolManager.cpp
     src/tools/ReadFileTool.cpp
+    src/tools/ListDirectoryTool.cpp
     src/tools/SearchSymbolTool.cpp
     src/tools/EditFileTool.cpp
     src/tools/WriteFileTool.cpp
