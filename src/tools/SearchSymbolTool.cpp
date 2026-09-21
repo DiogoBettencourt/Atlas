@@ -16,12 +16,21 @@ nlohmann::json SearchSymbolTool::parametersSchema() const {
 }
 
 nlohmann::json SearchSymbolTool::execute(const nlohmann::json& arguments,
-                                          [[maybe_unused]] const std::string& workspace_root) const {
+                                          const std::string& workspace_root) const {
     if (!arguments.contains("query") || !arguments["query"].is_string()) {
         return nlohmann::json{{"error", "missing required argument: query"}};
     }
 
-    auto matches = indexer_.search(arguments["query"].get<std::string>());
+    std::filesystem::path root(workspace_root);
+    if (!indexer_.isIndexed(root)) {
+        // Workspaces created after startup (e.g. via a /chat request naming
+        // a new `workspace`) never went through Application's initial
+        // indexDirectory() calls. Index on first use instead of silently
+        // returning zero matches forever.
+        indexer_.indexDirectory(root);
+    }
+
+    auto matches = indexer_.search(arguments["query"].get<std::string>(), root);
 
     nlohmann::json results = nlohmann::json::array();
     for (const auto& match : matches) {
