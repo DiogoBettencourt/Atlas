@@ -56,8 +56,15 @@ fs::path WorkspaceManager::resolveSafe(const fs::path& workspace_root,
     auto root_str = canonical_root.native();
     auto norm_str = normalized.native();
 
+    // A naive prefix check would treat a sibling directory whose name
+    // merely starts with the same characters as the workspace root (e.g.
+    // root ".../workspaces/default" vs ".../workspaces/default-evil") as
+    // "inside" it. Require an exact match or that the next character is a
+    // path separator, so containment is checked on whole path components.
     bool within = norm_str.size() >= root_str.size() &&
-                  std::equal(root_str.begin(), root_str.end(), norm_str.begin());
+                  std::equal(root_str.begin(), root_str.end(), norm_str.begin()) &&
+                  (norm_str.size() == root_str.size() ||
+                   norm_str[root_str.size()] == fs::path::preferred_separator);
 
     if (!within) {
         throw std::runtime_error("path traversal rejected: '" + relative_path +
