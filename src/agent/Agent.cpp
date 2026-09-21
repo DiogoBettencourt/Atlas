@@ -1,5 +1,7 @@
 #include "atlas/agent/Agent.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <regex>
 
 namespace atlas::agent {
@@ -13,30 +15,59 @@ Agent::Agent(LLMClient& llm_client,
       session_manager_(session_manager),
       model_name_(std::move(model_name)) {}
 
+namespace {
+
+nlohmann::json synthesizeToolCall(const nlohmann::json& parsed) {
+    return nlohmann::json::array({nlohmann::json{
+        {"function", {
+            {"name", parsed["name"]},
+            {"arguments", parsed.value("arguments", nlohmann::json::object())}
+        }}
+    }});
+}
+
+std::string trimWhitespace(const std::string& s) {
+    auto not_space = [](unsigned char c) { return !std::isspace(c); };
+    auto begin = std::find_if(s.begin(), s.end(), not_space);
+    auto end = std::find_if(s.rbegin(), s.rend(), not_space).base();
+    return (begin < end) ? std::string(begin, end) : std::string{};
+}
+
+} // namespace
+
 nlohmann::json Agent::extractToolCalls(const nlohmann::json& assistant_message) {
     if (assistant_message.contains("tool_calls") && assistant_message["tool_calls"].is_array() &&
         !assistant_message["tool_calls"].empty()) {
         return assistant_message["tool_calls"];
     }
 
-    // Fallback: some smaller / non-native-tool-calling models leak their
+    if (!assistant_message.contains("content") || !assistant_message["content"].is_string()) {
+        return nlohmann::json::array();
+    }
+    std::string content = assistant_message["content"].get<std::string>();
+
+    // Fallback 1: the whole message is (aside from surrounding whitespace) a
+    // bare JSON object describing the call, e.g.
+    // {"name": "read_file", "arguments": {"path": "x.cpp"}}
+    // Observed in practice from qwen2.5-coder:14b: some responses skip both
+    // native tool_calls and the fenced-block convention below entirely.
+    {
+        auto parsed = nlohmann::json::parse(trimWhitespace(content), nullptr, false);
+        if (!parsed.is_discarded() && parsed.is_object() && parsed.contains("name") &&
+            parsed["name"].is_string()) {
+            return synthesizeToolCall(parsed);
+        }
+    }
+
+    // Fallback 2: some smaller / non-native-tool-calling models leak their
     // intended call as a fenced JSON block in `content`, e.g.
     // ```json\n{"name": "read_file", "arguments": {"path": "x.cpp"}}\n```
-    if (assistant_message.contains("content") && assistant_message["content"].is_string()) {
-        static const std::regex fence_re(R"(```(?:json)?\s*([\s\S]*?)```)");
-        std::string content = assistant_message["content"].get<std::string>();
-        std::smatch match;
-        if (std::regex_search(content, match, fence_re)) {
-            auto parsed = nlohmann::json::parse(match[1].str(), nullptr, false);
-            if (!parsed.is_discarded() && parsed.contains("name")) {
-                nlohmann::json synthetic_call = {
-                    {"function", {
-                        {"name", parsed["name"]},
-                        {"arguments", parsed.value("arguments", nlohmann::json::object())}
-                    }}
-                };
-                return nlohmann::json::array({synthetic_call});
-            }
+    static const std::regex fence_re(R"(```(?:json)?\s*([\s\S]*?)```)");
+    std::smatch match;
+    if (std::regex_search(content, match, fence_re)) {
+        auto parsed = nlohmann::json::parse(match[1].str(), nullptr, false);
+        if (!parsed.is_discarded() && parsed.contains("name")) {
+            return synthesizeToolCall(parsed);
         }
     }
 
