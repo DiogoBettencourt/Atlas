@@ -41,7 +41,7 @@ int main() {
     std::cout << git.execute({{"action", "push"}}, repo.string()).dump(2) << "\n\n";
 
     std::cout << "== attempt push while on main (must be refused before even trying) ==\n";
-    git.execute({{"action", "checkout_branch"}, {"branch", "main"}}, repo.string());
+    (void)git.execute({{"action", "checkout_branch"}, {"branch", "main"}}, repo.string());
     std::cout << git.execute({{"action", "push"}}, repo.string()).dump(2) << "\n\n";
 
     std::cout << "== GitHubPRTool: disabled (no token) ==\n";

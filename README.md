@@ -233,3 +233,15 @@ Atlas/
 - The API server is synchronous/blocking (`httplib::Server::listen`); it
   runs on the main thread while a second thread watches for
   SIGINT/SIGTERM to trigger a clean shutdown.
+
+## Specs
+
+Longer-form guidance that didn't fit above:
+
+- [`docs/specs/self-improvement-safety.md`](docs/specs/self-improvement-safety.md) —
+  operational checklist for running `--self-repo` mode: dedicated clone,
+  token scope, branch protection, what to scrutinize when reviewing a PR
+  Atlas opened.
+- [`docs/specs/local-gpu-inference.md`](docs/specs/local-gpu-inference.md) —
+  running Ollama on an AMD GPU (ROCm) and sizing a model to fit in a given
+  amount of VRAM.

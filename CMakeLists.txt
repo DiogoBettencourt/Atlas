@@ -114,3 +114,23 @@ add_executable(atlas src/main.cpp)
 target_link_libraries(atlas PRIVATE atlas_core)
 
 enable_testing()
+
+# Manual smoke-test executables under tests_manual/ (see that directory's
+# existing convention). Wired up defensively with EXISTS checks rather than
+# a fixed list: independent branches each add their own tests_manual/*.cpp
+# file, and this way whichever ones have landed at configure time get built
+# and registered with ctest, with no CMakeLists.txt edit required (and no
+# merge conflict) when the next one lands.
+function(atlas_add_smoke_test test_name)
+    set(test_source "${CMAKE_CURRENT_SOURCE_DIR}/tests_manual/${test_name}.cpp")
+    if(EXISTS "${test_source}")
+        add_executable(${test_name} "${test_source}")
+        target_link_libraries(${test_name} PRIVATE atlas_core)
+        add_test(NAME ${test_name} COMMAND ${test_name})
+    endif()
+endfunction()
+
+atlas_add_smoke_test(git_tool_smoke)
+atlas_add_smoke_test(workspace_manager_smoke)
+atlas_add_smoke_test(symbol_indexer_smoke)
+atlas_add_smoke_test(list_directory_and_pull_smoke)
