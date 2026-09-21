@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Atlas AI Workspace v0.1.0</title>
+    <!-- Marked.js for clean Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --bg-base: #1e1e1e;
+            --bg-sidebar: #252526;
+            --bg-input: #3c3c3c;
+            --border-color: #333333;
+            --text-main: #d4d4d4;
+            --text-muted: #858585;
+            --accent-blue: #0e639c;
+            --accent-hover: #1177bb;
+            --accent-teal: #4ec9b0;
+            --accent-yellow: #dcdcaa;
+            --accent-orange: #ce9178;
+        }
+
+        body {
+            font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar Workspace Panel */
+        #sidebar {
+            width: 280px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #sidebar h2 { font-size: 16px; color: #fff; margin-top: 0; margin-bottom: 20px; letter-spacing: 0.5px; }
+        .session-info { background: #1e1e1e; padding: 12px; border-radius: 6px; border: 1px solid var(--border-color); margin-bottom: 15px; }
+        .session-info label { font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: bold; display: block; margin-bottom: 4px; }
+        .session-id-text { font-family: Consolas, monospace; font-size: 11px; color: var(--accent-teal); word-break: break-all; }
+
+        /* Main Chat Window */
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            box-sizing: border-box;
+            max-width: calc(100vw - 280px);
+        }
+        #chat-box {
+            flex: 1;
+            background: var(--bg-base);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 20px;
+            overflow-y: auto;
+            margin-bottom: 16px;
+            scroll-behavior: smooth;
+        }
+
+        /* Input Bar */
+        .input-group { display: flex; gap: 12px; }
+        input[type="text"] {
+            flex: 1;
+            background: var(--bg-input);
+            color: white;
+            border: 1px solid #555;
+            padding: 14px 16px;
+            font-family: inherit;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input[type="text"]:focus { border-color: var(--accent-blue); }
+        
+        button {
+            cursor: pointer;
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            padding: 0 24px;
+            font-family: inherit;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        button:hover { background: var(--accent-hover); }
+
+        /* Message Rows */
+        .msg-row { margin-bottom: 24px; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .sender-label { font-weight: 600; font-size: 13px; margin-bottom: 6px; letter-spacing: 0.3px; }
+        .user-label { color: var(--accent-teal); }
+        .atlas-label { color: var(--accent-blue); }
+
+        /* Markdown Styles */
+        .md-content p { margin: 0 0 10px 0; line-height: 1.6; }
+        .md-content code { background: #2d2d2d; color: var(--accent-orange); padding: 2px 6px; border-radius: 4px; font-family: Consolas, monospace; font-size: 0.9em; }
+        .md-content pre { background: #151515; border: 1px solid var(--border-color); padding: 14px; border-radius: 6px; overflow-x: auto; font-family: Consolas, monospace; font-size: 0.9em; margin: 10px 0; }
+        .md-content pre code { background: transparent; color: var(--text-main); padding: 0; }
+        .md-content ul, .md-content ol { margin-top: 0; padding-left: 20px; }
+
+        /* Real-Time Agent Feedback Blocks */
+        .thinking-container {
+            background: #252526;
+            border-left: 3px solid #858585;
+            padding: 12px 16px;
+            margin: 10px 0;
+            border-radius: 0 6px 6px 0;
+            font-family: Consolas, monospace;
+            font-size: 13px;
+            color: #b5b5b5;
+        }
+        .thinking-container b { color: #fff; display: block; margin-bottom: 4px; font-family: inherit; }
+
+        .tool-box {
+            background: #181818;
+            border: 1px solid #0e639c44;
+            border-radius: 6px;
+            margin: 12px 0;
+            overflow: hidden;
+            font-family: Consolas, monospace;
+            font-size: 13px;
+        }
+        .tool-box-header {
+            background: #0e639c22;
+            color: #569cd6;
+            padding: 8px 14px;
+            font-weight: bold;
+            border-bottom: 1px solid #0e639c44;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .tool-box-body { padding: 12px 14px; white-space: pre-wrap; color: var(--text-main); }
+
+        .tool-output-box {
+            background: #181818;
+            border: 1px dashed var(--accent-yellow);
+            border-radius: 6px;
+            margin: 12px 0;
+            overflow: hidden;
+            font-family: Consolas, monospace;
+            font-size: 13px;
+        }
+        .tool-output-header {
+            background: #dcdcaa15;
+            color: var(--accent-yellow);
+            padding: 8px 14px;
+            font-weight: bold;
+            border-bottom: 1px dashed var(--accent-yellow);
+        }
+        .tool-output-body { padding: 12px 14px; white-space: pre-wrap; color: var(--accent-orange); max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h2>Atlas Core</h2>
+        <div class="session-info">
+            <label>Active Session ID</label>
+            <span id="session-id" class="session-id-text">1b94d0e8-3ea5-4242-b1f3-e30f093410ac</span>
+        </div>
+        <button onclick="newSession()" style="width:150px; margin-top: auto;">New Session</button>
+    </div>
+
+    <div id="main">
+        <div id="chat-box"></div>
+        <div class="input-group">
+            <input type="text" id="user-input" placeholder="Ask Atlas to scan workspace, inspect files, or write code..." onkeypress="handleKey(event)">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = "1b94d0e8-3ea5-4242-b1f3-e30f093410ac";
+
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        // Formats Qwen 3 thinking blocks and parses Markdown
+        function formatAgentText(rawText) {
+            if (!rawText) return "";
+            let htmlOutput = "";
+
+            // Intercept Qwen 3 <think> tags
+            let match = rawText.match(/<think>([\s\S]*?)<\/think>/);
+            if (match) {
+                let thoughts = escapeHtml(match[1].trim());
+                htmlOutput += `<div class="thinking-container"><b>[Atlas Thinking Process]</b>${thoughts}</div>`;
+                rawText = rawText.replace(match[0], "");
+            }
+
+            let cleanText = rawText.trim();
+            if (cleanText) {
+                htmlOutput += `<div class="md-content">${marked.parse(cleanText)}</div>`;
+            }
+            return htmlOutput;
+        }
+
+        function renderToolCall(name, args) {
+            let argsStr = typeof args === 'object' ? JSON.stringify(args, null, 2) : args;
+            return `<div class="tool-box">
+                        <div class="tool-box-header">⚡ Executing Tool: ${escapeHtml(name)}</div>
+                        <div class="tool-box-body">${escapeHtml(argsStr)}</div>
+                    </div>`;
+        }
+
+        function renderToolResult(result) {
+            let resStr = typeof result === 'object' ? JSON.stringify(result, null, 2) : result;
+            if (resStr.length > 600) resStr = resStr.substring(0, 600) + '\n... [output truncated]';
+            return `<div class="tool-output-box">
+                        <div class="tool-output-header">↳ Tool Execution Result</div>
+                        <div class="tool-output-body">${escapeHtml(resStr)}</div>
+                    </div>`;
+        }
+
+        function appendMessage(sender, htmlContent) {
+            const chatBox = document.getElementById('chat-box');
+            const labelClass = sender === 'User' ? 'user-label' : 'atlas-label';
+            chatBox.innerHTML += `
+                <div class="msg-row">
+                    <div class="sender-label ${labelClass}">${sender}</div>
+                    <div>${htmlContent}</div>
+                </div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const inputField = document.getElementById('user-input');
+            const message = inputField.value.trim();
+            if (!message) return;
+
+            appendMessage('User', `<div class="md-content"><p>${escapeHtml(message)}</p></div>`);
+            inputField.value = '';
+
+            try {
+                const response = await fetch('http://127.0.0.1:8080/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message, session_id: sessionId })
+                });
+                
+                const data = await response.json();
+                let atlasReplyHtml = "";
+
+                // Render ReAct loop execution steps in real-time order
+                if (data.steps && data.steps.length > 0) {
+                    data.steps.forEach(step => {
+                        if (step.type === 'assistant_thought' && step.content) {
+                            atlasReplyHtml += formatAgentText(step.content);
+                        }
+                        if (step.type === 'tool_call' && step.name) {
+                            atlasReplyHtml += renderToolCall(step.name, step.arguments);
+                        }
+                        if (step.type === 'tool_result' && step.result) {
+                            atlasReplyHtml += renderToolResult(step.result);
+                        }
+                    });
+                }
+
+                if (data.reply) {
+                    atlasReplyHtml += formatAgentText(data.reply);
+                } else if (!data.steps || data.steps.length === 0) {
+                    atlasReplyHtml += `<div class="md-content">${marked.parse(JSON.stringify(data))}</div>`;
+                }
+
+                appendMessage('Atlas', atlasReplyHtml);
+
+            } catch (err) {
+                appendMessage('System', `<span style="color: #f14c4c;">Connection Error: Could not reach Atlas backend server on port 8080.</span>`);
+            }
+        }
+
+        function handleKey(e) { if (e.key === 'Enter') sendMessage(); }
+
+        function newSession() {
+            sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+            document.getElementById('session-id').innerText = sessionId;
+            document.getElementById('chat-box').innerHTML = '';
+        }
+    </script>
+</body>
+</html>

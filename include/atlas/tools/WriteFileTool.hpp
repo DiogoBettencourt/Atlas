@@ -1,21 +1,26 @@
 #pragma once
 
 #include "atlas/tools/Tool.hpp"
-#include "atlas/core/WorkspaceManager.hpp"
 
 namespace atlas::tools {
 
-class WriteFileTool : public Tool {
+// Creates or overwrites a workspace-relative file with the given content.
+// Parent directories are created automatically. Sandboxed via
+// WorkspaceManager::resolveSafe.
+class WriteFileTool final : public Tool {
 public:
-    explicit WriteFileTool(core::WorkspaceManager& workspace_manager);
+    [[nodiscard]] std::string name() const override { return "write_file"; }
 
-    std::string name() const override;
-    std::string description() const override;
-    nlohmann::json parametersSchema() const override;
-    std::string execute(const nlohmann::json& arguments) override;
+    [[nodiscard]] std::string description() const override {
+        return "Creates a new file or fully overwrites an existing one within "
+               "the active workspace. Prefer edit_file for surgical changes "
+               "to an existing file.";
+    }
 
-private:
-    core::WorkspaceManager& workspace_manager_;
+    [[nodiscard]] nlohmann::json parametersSchema() const override;
+
+    [[nodiscard]] nlohmann::json execute(const nlohmann::json& arguments,
+                                          const std::string& workspace_root) const override;
 };
 
 } // namespace atlas::tools

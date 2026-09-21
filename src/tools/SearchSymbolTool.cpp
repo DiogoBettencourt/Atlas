@@ -1,55 +1,47 @@
 #include "atlas/tools/SearchSymbolTool.hpp"
-#include <sstream>
 
 namespace atlas::tools {
 
-SearchSymbolTool::SearchSymbolTool(core::SymbolIndexer& indexer)
-    : indexer_(indexer) {}
-
-std::string SearchSymbolTool::name() const {
-    return "search_symbols";
-}
-
-std::string SearchSymbolTool::description() const {
-    return "Searches the codebase for classes, structs, functions, or methods matching a keyword. "
-           "Returns the file path and line number of the match. Use this before trying to read files blindly.";
-}
-
 nlohmann::json SearchSymbolTool::parametersSchema() const {
-    return {
+    return nlohmann::json{
         {"type", "object"},
         {"properties", {
             {"query", {
                 {"type", "string"},
-                {"description", "The name of the symbol to search for (e.g., 'Application', 'chat', 'SymbolIndexer')."}
+                {"description", "Substring to search for within symbol names (case-insensitive)."}
             }}
         }},
         {"required", nlohmann::json::array({"query"})}
     };
 }
 
-std::string SearchSymbolTool::execute(const nlohmann::json& arguments) {
+nlohmann::json SearchSymbolTool::execute(const nlohmann::json& arguments,
+                                          const std::string& workspace_root) const {
     if (!arguments.contains("query") || !arguments["query"].is_string()) {
-        return "Error: Missing or invalid 'query' parameter.";
+        return nlohmann::json{{"error", "missing required argument: query"}};
     }
 
-    std::string query = arguments["query"];
-    auto results = indexer_.searchSymbols(query);
-
-    if (results.empty()) {
-        return "No symbols found matching query: " + query;
+    std::filesystem::path root(workspace_root);
+    if (!indexer_.isIndexed(root)) {
+        // Workspaces created after startup (e.g. via a /chat request naming
+        // a new `workspace`) never went through Application's initial
+        // indexDirectory() calls. Index on first use instead of silently
+        // returning zero matches forever.
+        indexer_.indexDirectory(root);
     }
 
-    std::ostringstream ss;
-    ss << "Found " << results.size() << " match(es) for '" << query << "':\n";
-    for (const auto& sym : results) {
-        // Outputting the full path makes it easy for the Agent to chain this directly into read_file
-        ss << "- [" << sym.type << "] " << sym.name 
-           << "\n  Path: " << sym.file_path.string() 
-           << "\n  Line: " << sym.line_number << "\n";
+    auto matches = indexer_.search(arguments["query"].get<std::string>(), root);
+
+    nlohmann::json results = nlohmann::json::array();
+    for (const auto& match : matches) {
+        results.push_back(match);
     }
 
-    return ss.str();
+    return nlohmann::json{
+        {"query", arguments["query"]},
+        {"match_count", results.size()},
+        {"matches", results}
+    };
 }
 
 } // namespace atlas::tools
