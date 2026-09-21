@@ -45,13 +45,17 @@ public:
 
     void setMaxIterations(unsigned int max_iterations) { max_iterations_ = max_iterations; }
 
-private:
     // Attempts to pull a tool_calls array off an assistant message, whether
-    // it arrived as native Ollama tool_calls JSON or leaked into the
-    // content field as a fenced ```json code block (common with smaller
-    // models that don't fully honor structured tool calling).
+    // it arrived as native Ollama tool_calls JSON, a bare JSON object in
+    // `content` (e.g. {"name": "read_file", "arguments": {...}}), or a
+    // fenced ```json code block - all observed in practice from local
+    // models that don't consistently honor structured tool calling. Public
+    // and static (pure function of its input, no Agent state) so it can be
+    // unit-tested directly against captured model responses without a live
+    // Ollama server - see tests_manual/agent_extract_tool_calls_smoke.cpp.
     [[nodiscard]] static nlohmann::json extractToolCalls(const nlohmann::json& assistant_message);
 
+private:
     LLMClient& llm_client_;
     tools::ToolManager& tool_manager_;
     core::SessionManager& session_manager_;
