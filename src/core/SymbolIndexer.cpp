@@ -37,30 +37,43 @@ std::string lower(std::string s) {
 
 } // namespace
 
-void SymbolIndexer::indexDirectory(const fs::path& root) {
-    symbols_.clear();
-
-    if (!fs::exists(root) || !fs::is_directory(root)) {
-        return;
-    }
-
-    for (const auto& entry : fs::recursive_directory_iterator(
-             root, fs::directory_options::skip_permission_denied)) {
-        if (!entry.is_regular_file() || !hasRecognizedExtension(entry.path())) {
-            continue;
-        }
-        // Skip common noise directories.
-        auto path_str = entry.path().generic_string();
-        if (path_str.find("/build/") != std::string::npos ||
-            path_str.find("/.git/") != std::string::npos ||
-            path_str.find("/node_modules/") != std::string::npos) {
-            continue;
-        }
-        indexFile(entry.path(), root);
-    }
+std::string SymbolIndexer::keyFor(const fs::path& root) {
+    std::error_code ec;
+    fs::path canonical = fs::weakly_canonical(root, ec);
+    return (ec ? root : canonical).generic_string();
 }
 
-void SymbolIndexer::indexFile(const fs::path& file, const fs::path& root) {
+bool SymbolIndexer::isIndexed(const fs::path& root) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return symbols_by_root_.find(keyFor(root)) != symbols_by_root_.end();
+}
+
+void SymbolIndexer::indexDirectory(const fs::path& root) {
+    std::vector<SymbolEntry> discovered;
+
+    if (fs::exists(root) && fs::is_directory(root)) {
+        for (const auto& entry : fs::recursive_directory_iterator(
+                 root, fs::directory_options::skip_permission_denied)) {
+            if (!entry.is_regular_file() || !hasRecognizedExtension(entry.path())) {
+                continue;
+            }
+            // Skip common noise directories.
+            auto path_str = entry.path().generic_string();
+            if (path_str.find("/build/") != std::string::npos ||
+                path_str.find("/.git/") != std::string::npos ||
+                path_str.find("/node_modules/") != std::string::npos) {
+                continue;
+            }
+            indexFile(entry.path(), root, discovered);
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    symbols_by_root_[keyFor(root)] = std::move(discovered);
+}
+
+void SymbolIndexer::indexFile(const fs::path& file, const fs::path& root,
+                               std::vector<SymbolEntry>& out) const {
     std::ifstream in(file);
     if (!in) {
         return;
@@ -84,19 +97,19 @@ void SymbolIndexer::indexFile(const fs::path& file, const fs::path& root) {
         ++line_no;
 
         if (std::regex_search(line, match, class_re)) {
-            symbols_.push_back(SymbolEntry{match[1].str(), match[2].str(), relative, line_no});
+            out.push_back(SymbolEntry{match[1].str(), match[2].str(), relative, line_no});
             continue;
         }
         if (std::regex_search(line, match, py_class_re)) {
-            symbols_.push_back(SymbolEntry{"class", match[1].str(), relative, line_no});
+            out.push_back(SymbolEntry{"class", match[1].str(), relative, line_no});
             continue;
         }
         if (std::regex_search(line, match, py_def_re)) {
-            symbols_.push_back(SymbolEntry{"function", match[1].str(), relative, line_no});
+            out.push_back(SymbolEntry{"function", match[1].str(), relative, line_no});
             continue;
         }
         if (std::regex_search(line, match, js_func_re)) {
-            symbols_.push_back(SymbolEntry{"function", match[1].str(), relative, line_no});
+            out.push_back(SymbolEntry{"function", match[1].str(), relative, line_no});
             continue;
         }
         // C++ free function / method definitions - kept last since it's the
@@ -110,21 +123,34 @@ void SymbolIndexer::indexFile(const fs::path& file, const fs::path& root) {
             };
             if (std::find(kExcluded.begin(), kExcluded.end(), candidate) == kExcluded.end()) {
                 std::string kind = candidate.find("::") != std::string::npos ? "method" : "function";
-                symbols_.push_back(SymbolEntry{kind, candidate, relative, line_no});
+                out.push_back(SymbolEntry{kind, candidate, relative, line_no});
             }
         }
     }
 }
 
-std::vector<SymbolEntry> SymbolIndexer::search(const std::string& query) const {
-    std::vector<SymbolEntry> results;
+std::vector<SymbolEntry> SymbolIndexer::search(const std::string& query,
+                                                const fs::path& workspace_root) const {
     std::string needle = lower(query);
-    for (const auto& sym : symbols_) {
+    std::vector<SymbolEntry> results;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = symbols_by_root_.find(keyFor(workspace_root));
+    if (it == symbols_by_root_.end()) {
+        return results; // not indexed (yet) - empty, not an error
+    }
+    for (const auto& sym : it->second) {
         if (lower(sym.name).find(needle) != std::string::npos) {
             results.push_back(sym);
         }
     }
     return results;
+}
+
+std::size_t SymbolIndexer::symbolCount(const fs::path& workspace_root) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = symbols_by_root_.find(keyFor(workspace_root));
+    return it == symbols_by_root_.end() ? 0 : it->second.size();
 }
 
 } // namespace atlas::core

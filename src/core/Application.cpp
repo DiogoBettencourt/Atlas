@@ -88,10 +88,6 @@ Application::Application(int argc, char* argv[])
     } else {
         std::cout << "  self-improve:   enabled, repo=" << self_repo << ", github="
                    << (github_repo.empty() ? "(not set - github_pr disabled)" : github_repo)
-                   << std::endl
-                   << "                  NOTE: symbol_indexer_ is a single shared index; "
-                      "indexing the self-repo means search_symbol now covers *it*, not the "
-                      "default workspace, until reindexed. See README known limitations."
                    << std::endl;
     }
 }

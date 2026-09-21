@@ -5,9 +5,11 @@
 
 namespace atlas::tools {
 
-// Queries the shared SymbolIndexer for classes/functions/methods whose name
-// matches a substring. This is the "Librarian" entry point agents should
-// reach for before reading whole files.
+// Queries the SymbolIndexer for classes/functions/methods whose name
+// matches a substring, scoped to the calling request's workspace. This is
+// the "Librarian" entry point agents should reach for before reading whole
+// files. Lazily indexes the workspace on first use if it hasn't been
+// indexed yet (e.g. a workspace created via the API after startup).
 class SearchSymbolTool final : public Tool {
 public:
     explicit SearchSymbolTool(core::SymbolIndexer& indexer) : indexer_(indexer) {}
