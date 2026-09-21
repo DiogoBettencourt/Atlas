@@ -1,8 +1,84 @@
 #include "atlas/agent/Agent.hpp"
 
+#include <optional>
 #include <regex>
 
 namespace atlas::agent {
+
+namespace {
+
+// Scans `text` for the first syntactically-balanced top-level JSON object
+// (a '{' ... matching '}' span, respecting quoted strings and backslash
+// escapes) and returns that substring, or std::nullopt if none is found.
+//
+// Only the *first* balanced object is ever considered. This matters
+// because some models, when given a multi-step instruction, front-load
+// several tool calls into a single response back-to-back with no fencing
+// or separators at all - e.g. observed live:
+//   {"name":"edit_file",...} {"name":"git","arguments":{"action":"add"...
+//   {"name":"git","arguments":{"action":"commit"...} {"name":"github_pr"...
+// The ReAct loop in chat() below only executes one tool call per
+// iteration and feeds its real result back before asking the model what
+// to do next, so grabbing just the first object here and letting later
+// iterations pick up the remaining steps (once they're no longer guesses)
+// is the correct behavior, not a limitation to work around.
+std::optional<std::string> findFirstJsonObject(const std::string& text) {
+    std::size_t start = text.find('{');
+    if (start == std::string::npos) {
+        return std::nullopt;
+    }
+
+    int depth = 0;
+    bool in_string = false;
+    bool escaped = false;
+
+    for (std::size_t i = start; i < text.size(); ++i) {
+        char c = text[i];
+
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            in_string = true;
+        } else if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0) {
+                return text.substr(start, i - start + 1);
+            }
+        }
+    }
+
+    // Unbalanced (truncated mid-object, etc.) - not usable.
+    return std::nullopt;
+}
+
+// Builds the same synthetic native-tool-call shape used elsewhere in this
+// file from a parsed `{"name": ..., "arguments": {...}}` object, or
+// nlohmann::json::array() if `parsed` doesn't look like a tool call.
+nlohmann::json toSyntheticToolCall(const nlohmann::json& parsed) {
+    if (parsed.is_discarded() || !parsed.is_object() || !parsed.contains("name")) {
+        return nlohmann::json::array();
+    }
+    nlohmann::json synthetic_call = {
+        {"function", {
+            {"name", parsed["name"]},
+            {"arguments", parsed.value("arguments", nlohmann::json::object())}
+        }}
+    };
+    return nlohmann::json::array({synthetic_call});
+}
+
+} // namespace
 
 Agent::Agent(LLMClient& llm_client,
              tools::ToolManager& tool_manager,
@@ -19,24 +95,33 @@ nlohmann::json Agent::extractToolCalls(const nlohmann::json& assistant_message) 
         return assistant_message["tool_calls"];
     }
 
-    // Fallback: some smaller / non-native-tool-calling models leak their
+    if (!assistant_message.contains("content") || !assistant_message["content"].is_string()) {
+        return nlohmann::json::array();
+    }
+    std::string content = assistant_message["content"].get<std::string>();
+
+    // Fallback 1: some smaller / non-native-tool-calling models leak their
     // intended call as a fenced JSON block in `content`, e.g.
     // ```json\n{"name": "read_file", "arguments": {"path": "x.cpp"}}\n```
-    if (assistant_message.contains("content") && assistant_message["content"].is_string()) {
-        static const std::regex fence_re(R"(```(?:json)?\s*([\s\S]*?)```)");
-        std::string content = assistant_message["content"].get<std::string>();
-        std::smatch match;
-        if (std::regex_search(content, match, fence_re)) {
-            auto parsed = nlohmann::json::parse(match[1].str(), nullptr, false);
-            if (!parsed.is_discarded() && parsed.contains("name")) {
-                nlohmann::json synthetic_call = {
-                    {"function", {
-                        {"name", parsed["name"]},
-                        {"arguments", parsed.value("arguments", nlohmann::json::object())}
-                    }}
-                };
-                return nlohmann::json::array({synthetic_call});
-            }
+    static const std::regex fence_re(R"(```(?:json)?\s*([\s\S]*?)```)");
+    std::smatch match;
+    if (std::regex_search(content, match, fence_re)) {
+        auto parsed = nlohmann::json::parse(match[1].str(), nullptr, false);
+        nlohmann::json call = toSyntheticToolCall(parsed);
+        if (!call.empty()) {
+            return call;
+        }
+    }
+
+    // Fallback 2: no fencing at all - a bare JSON object (or, as observed
+    // live, several bare objects concatenated back-to-back). Scan for the
+    // first balanced object anywhere in the text; see findFirstJsonObject
+    // for why only the first one is used.
+    if (auto candidate = findFirstJsonObject(content)) {
+        auto parsed = nlohmann::json::parse(*candidate, nullptr, false);
+        nlohmann::json call = toSyntheticToolCall(parsed);
+        if (!call.empty()) {
+            return call;
         }
     }
 
