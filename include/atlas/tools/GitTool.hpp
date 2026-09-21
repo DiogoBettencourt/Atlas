@@ -7,7 +7,7 @@ namespace atlas::tools {
 
 // Exposes a narrow, safety-checked subset of git to the agent so it can
 // work on its OWN source tree: status, diff, add, commit, checkout_branch,
-// push. This tool is deliberately not general-purpose:
+// push, pull. This tool is deliberately not general-purpose:
 //
 //   - It only operates when the request's workspace_root canonically
 //     matches the single `allowed_repo_root` it was constructed with (set
@@ -29,10 +29,12 @@ public:
 
     [[nodiscard]] std::string description() const override {
         return "Runs a restricted set of git operations against Atlas's own "
-               "repository: status, diff, add, commit, checkout_branch, push. "
-               "Only works inside the dedicated self-improvement workspace. "
-               "Never pushes to main/master directly - always work on a "
-               "feature branch, then use github_pr to open a pull request.";
+               "repository: status, diff, add, commit, checkout_branch, push, "
+               "pull. Only works inside the dedicated self-improvement workspace. "
+               "Pull (fast-forward only) before branching so new work starts "
+               "from the latest remote state. Never pushes to main/master "
+               "directly - always work on a feature branch, then use "
+               "github_pr to open a pull request.";
     }
 
     [[nodiscard]] nlohmann::json parametersSchema() const override;

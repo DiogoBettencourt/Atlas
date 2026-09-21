@@ -23,12 +23,20 @@ namespace {
 // underscore, and forward slash (for "feature/x" style names). Rejects
 // anything that could be interpreted as a git option (leading '-') or
 // path traversal.
-bool isValidBranchName(const std::string& name) {
+// Shape-only validation shared by every branch-name argument: safe
+// characters, bounded length, no ".." component. Does NOT reject
+// main/master/HEAD - callers that must protect those branches (checkout,
+// push) check for them separately.
+bool isSafeRefShape(const std::string& name) {
     static const std::regex valid(R"(^[A-Za-z0-9][A-Za-z0-9._/-]*$)");
     if (name.empty() || name.size() > 200) return false;
-    if (name == "main" || name == "master" || name == "HEAD") return false;
     if (name.find("..") != std::string::npos) return false;
     return std::regex_match(name, valid);
+}
+
+bool isValidBranchName(const std::string& name) {
+    if (name == "main" || name == "master" || name == "HEAD") return false;
+    return isSafeRefShape(name);
 }
 
 #if defined(_WIN32)
@@ -92,12 +100,14 @@ nlohmann::json GitTool::parametersSchema() const {
             {"action", {
                 {"type", "string"},
                 {"enum", nlohmann::json::array(
-                    {"status", "diff", "add", "commit", "checkout_branch", "push"})},
+                    {"status", "diff", "add", "commit", "checkout_branch", "push", "pull"})},
                 {"description", "Which git operation to perform."}
             }},
             {"branch", {
                 {"type", "string"},
-                {"description", "Branch name for checkout_branch. Never 'main' or 'master'."}
+                {"description", "Branch name for checkout_branch (never 'main' or 'master') "
+                                "or, for pull, the remote branch to fast-forward from "
+                                "(defaults to the current branch)."}
             }},
             {"message", {
                 {"type", "string"},
@@ -350,6 +360,26 @@ nlohmann::json GitTool::execute(const nlohmann::json& arguments,
                 "'. Use checkout_branch to create a feature branch first."}};
         }
         return runGit({"push", "-u", "origin", branch});
+    }
+
+    if (action == "pull") {
+        // Unlike checkout_branch/push, pull never writes to the remote, so
+        // main/master are allowed here - syncing local main from origin
+        // before branching off it is exactly what this is for.
+        std::string branch = arguments.value("branch", std::string{});
+        if (branch.empty()) {
+            branch = currentBranch();
+        }
+        if (branch.empty()) {
+            return nlohmann::json{{"error", "unable to determine branch to pull"}};
+        }
+        if (!isSafeRefShape(branch)) {
+            return nlohmann::json{{"error", "invalid branch name: " + branch}};
+        }
+        // --ff-only: never fabricates a merge commit or rewrites history;
+        // fails cleanly if the local branch has diverged, which is exactly
+        // the case where an agent should stop and ask rather than guess.
+        return runGit({"pull", "--ff-only", "origin", branch});
     }
 
     return nlohmann::json{{"error", "unknown action: " + action}};
