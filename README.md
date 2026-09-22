@@ -1,5 +1,7 @@
 # Atlas
 
+**This file is actively maintained.**
+
 Local-first, privacy-focused C++20 AI workspace backend. Headless REST
 microservice that drives a local Ollama model through a ReAct (Reason +
 Act) tool-calling loop, with sandboxed filesystem tools and a lightweight
