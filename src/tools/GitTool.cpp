@@ -3,6 +3,7 @@
 #include <array>
 #include <cstring>
 #include <regex>
+#include <stdexcept>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -281,108 +282,125 @@ nlohmann::json GitTool::runGit(const std::vector<std::string>& args) const {
 
 nlohmann::json GitTool::execute(const nlohmann::json& arguments,
                                  const std::string& workspace_root) const {
-    if (allowed_repo_root_.empty()) {
-        return nlohmann::json{{"error",
-            "self-improvement git tool is disabled: start Atlas with --self-repo=<path> to enable it"}};
-    }
-    if (!isAllowedRepo(workspace_root)) {
-        return nlohmann::json{{"error",
-            "git tool refused: this workspace is not the configured self-repo. "
-            "Switch to the self-improvement workspace to use this tool."}};
-    }
-    if (!arguments.contains("action") || !arguments["action"].is_string()) {
-        return nlohmann::json{{"error", "missing required argument: action"}};
-    }
+    // Defensive: every other Tool guards its execute() with a
+    // try/catch (see ListDirectoryTool, ReadFileTool, EditFileTool,
+    // WriteFileTool) so a thrown exception becomes a JSON {"error":...}
+    // instead of propagating out of the ReAct loop uncaught. GitTool was
+    // the one tool missing this net - added after a Windows-only crash
+    // (list_directory_and_pull_smoke, STATUS_STACK_BUFFER_OVERRUN /
+    // 0xC0000409) that could not be reproduced or root-caused from a
+    // non-Windows environment; an uncaught C++ exception reaching the
+    // CRT's default terminate handler is exactly what surfaces as that
+    // status code on Windows, so this closes the most likely gap even
+    // though the precise throw site couldn't be confirmed.
+    try {
+        if (allowed_repo_root_.empty()) {
+            return nlohmann::json{{"error",
+                "self-improvement git tool is disabled: start Atlas with --self-repo=<path> to enable it"}};
+        }
+        if (!isAllowedRepo(workspace_root)) {
+            return nlohmann::json{{"error",
+                "git tool refused: this workspace is not the configured self-repo. "
+                "Switch to the self-improvement workspace to use this tool."}};
+        }
+        if (!arguments.contains("action") || !arguments["action"].is_string()) {
+            return nlohmann::json{{"error", "missing required argument: action"}};
+        }
 
-    const std::string action = arguments["action"].get<std::string>();
+        const std::string action = arguments["action"].get<std::string>();
 
-    if (action == "status") {
-        return runGit({"status", "--short", "--branch"});
-    }
+        if (action == "status") {
+            return runGit({"status", "--short", "--branch"});
+        }
 
-    if (action == "diff") {
-        return runGit({"diff"});
-    }
+        if (action == "diff") {
+            return runGit({"diff"});
+        }
 
-    if (action == "add") {
-        std::vector<std::string> args{"add"};
-        if (arguments.contains("paths") && arguments["paths"].is_array() &&
-            !arguments["paths"].empty()) {
-            for (const auto& p : arguments["paths"]) {
-                if (!p.is_string()) {
-                    return nlohmann::json{{"error", "paths must be an array of strings"}};
+        if (action == "add") {
+            std::vector<std::string> args{"add"};
+            if (arguments.contains("paths") && arguments["paths"].is_array() &&
+                !arguments["paths"].empty()) {
+                for (const auto& p : arguments["paths"]) {
+                    if (!p.is_string()) {
+                        return nlohmann::json{{"error", "paths must be an array of strings"}};
+                    }
+                    std::string path_str = p.get<std::string>();
+                    if (path_str.rfind('-', 0) == 0) {
+                        return nlohmann::json{{"error", "path may not begin with '-': " + path_str}};
+                    }
+                    args.push_back(path_str);
                 }
-                std::string path_str = p.get<std::string>();
-                if (path_str.rfind('-', 0) == 0) {
-                    return nlohmann::json{{"error", "path may not begin with '-': " + path_str}};
-                }
-                args.push_back(path_str);
+            } else {
+                args.push_back(".");
             }
-        } else {
-            args.push_back(".");
+            return runGit(args);
         }
-        return runGit(args);
-    }
 
-    if (action == "commit") {
-        if (!arguments.contains("message") || !arguments["message"].is_string() ||
-            arguments["message"].get<std::string>().empty()) {
-            return nlohmann::json{{"error", "missing required argument: message"}};
+        if (action == "commit") {
+            if (!arguments.contains("message") || !arguments["message"].is_string() ||
+                arguments["message"].get<std::string>().empty()) {
+                return nlohmann::json{{"error", "missing required argument: message"}};
+            }
+            return runGit({"commit", "-m", arguments["message"].get<std::string>()});
         }
-        return runGit({"commit", "-m", arguments["message"].get<std::string>()});
-    }
 
-    if (action == "checkout_branch") {
-        if (!arguments.contains("branch") || !arguments["branch"].is_string()) {
-            return nlohmann::json{{"error", "missing required argument: branch"}};
+        if (action == "checkout_branch") {
+            if (!arguments.contains("branch") || !arguments["branch"].is_string()) {
+                return nlohmann::json{{"error", "missing required argument: branch"}};
+            }
+            std::string branch = arguments["branch"].get<std::string>();
+            if (!isValidBranchName(branch)) {
+                return nlohmann::json{{"error",
+                    "invalid or disallowed branch name (main/master/HEAD are protected): " + branch}};
+            }
+            // Try switching to an existing branch first; fall back to creating it.
+            auto attempt = runGit({"checkout", branch});
+            if (attempt.value("exit_code", -1) != 0) {
+                attempt = runGit({"checkout", "-b", branch});
+            }
+            return attempt;
         }
-        std::string branch = arguments["branch"].get<std::string>();
-        if (!isValidBranchName(branch)) {
-            return nlohmann::json{{"error",
-                "invalid or disallowed branch name (main/master/HEAD are protected): " + branch}};
-        }
-        // Try switching to an existing branch first; fall back to creating it.
-        auto attempt = runGit({"checkout", branch});
-        if (attempt.value("exit_code", -1) != 0) {
-            attempt = runGit({"checkout", "-b", branch});
-        }
-        return attempt;
-    }
 
-    if (action == "push") {
-        std::string branch = currentBranch();
-        if (branch.empty()) {
-            return nlohmann::json{{"error", "unable to determine current branch"}};
+        if (action == "push") {
+            std::string branch = currentBranch();
+            if (branch.empty()) {
+                return nlohmann::json{{"error", "unable to determine current branch"}};
+            }
+            if (branch == "main" || branch == "master") {
+                return nlohmann::json{{"error",
+                    "refusing to push directly to '" + branch +
+                    "'. Use checkout_branch to create a feature branch first."}};
+            }
+            return runGit({"push", "-u", "origin", branch});
         }
-        if (branch == "main" || branch == "master") {
-            return nlohmann::json{{"error",
-                "refusing to push directly to '" + branch +
-                "'. Use checkout_branch to create a feature branch first."}};
-        }
-        return runGit({"push", "-u", "origin", branch});
-    }
 
-    if (action == "pull") {
-        // Unlike checkout_branch/push, pull never writes to the remote, so
-        // main/master are allowed here - syncing local main from origin
-        // before branching off it is exactly what this is for.
-        std::string branch = arguments.value("branch", std::string{});
-        if (branch.empty()) {
-            branch = currentBranch();
+        if (action == "pull") {
+            // Unlike checkout_branch/push, pull never writes to the remote, so
+            // main/master are allowed here - syncing local main from origin
+            // before branching off it is exactly what this is for.
+            std::string branch = arguments.value("branch", std::string{});
+            if (branch.empty()) {
+                branch = currentBranch();
+            }
+            if (branch.empty()) {
+                return nlohmann::json{{"error", "unable to determine branch to pull"}};
+            }
+            if (!isSafeRefShape(branch)) {
+                return nlohmann::json{{"error", "invalid branch name: " + branch}};
+            }
+            // --ff-only: never fabricates a merge commit or rewrites history;
+            // fails cleanly if the local branch has diverged, which is exactly
+            // the case where an agent should stop and ask rather than guess.
+            return runGit({"pull", "--ff-only", "origin", branch});
         }
-        if (branch.empty()) {
-            return nlohmann::json{{"error", "unable to determine branch to pull"}};
-        }
-        if (!isSafeRefShape(branch)) {
-            return nlohmann::json{{"error", "invalid branch name: " + branch}};
-        }
-        // --ff-only: never fabricates a merge commit or rewrites history;
-        // fails cleanly if the local branch has diverged, which is exactly
-        // the case where an agent should stop and ask rather than guess.
-        return runGit({"pull", "--ff-only", "origin", branch});
-    }
 
-    return nlohmann::json{{"error", "unknown action: " + action}};
+        return nlohmann::json{{"error", "unknown action: " + action}};
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", std::string("git tool exception: ") + e.what()}};
+    } catch (...) {
+        return nlohmann::json{{"error", "git tool: unknown exception"}};
+    }
 }
 
 } // namespace atlas::tools
