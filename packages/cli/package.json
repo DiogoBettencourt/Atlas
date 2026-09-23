@@ -1,18 +1,30 @@
 {
-  "name": "atlas-cli",
+  "name": "@diogobettencourt/atlas-cli",
   "version": "0.1.0",
   "description": "Terminal client for the Atlas agent - a thin, streaming REPL over Atlas's /chat/stream REST API.",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DiogoBettencourt/Atlas.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/DiogoBettencourt/Atlas/tree/master/packages/cli#readme",
+  "bugs": {
+    "url": "https://github.com/DiogoBettencourt/Atlas/issues"
+  },
   "type": "module",
   "bin": {
     "atlas": "./dist/cli.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "commander": "^15.0.0",
