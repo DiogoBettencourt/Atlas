@@ -69,6 +69,10 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
   const [liveEvents, setLiveEvents] = useState<AgentEvent[]>([]);
   const [serverOk, setServerOk] = useState<boolean | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
+  // Transient one-line status for a connection retry or a streaming ->
+  // non-streaming fallback, shown above the spinner while busy. Cleared
+  // whenever a new turn starts or the current one finishes.
+  const [statusLine, setStatusLine] = useState<string | undefined>(undefined);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -96,13 +100,33 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
     setHistory((h) => [...h, { role: "user", content: trimmed }]);
     setError(undefined);
     setLiveEvents([]);
+    setStatusLine(undefined);
     setBusy(true);
 
     try {
-      const reply = await client.chatStream({ sessionId, message: trimmed, workspace }, (event) => {
-        if (!mounted.current) return;
-        setLiveEvents((events) => [...events, event]);
-      });
+      // sendMessage() (rather than chatStream() directly) retries a
+      // dropped /chat/stream connection with backoff, and falls back to
+      // the non-streaming /chat if streaming still can't connect - see
+      // its doc comment in api/client.ts for exactly which failures that
+      // covers and why (it's narrower than "any dropped connection", on
+      // purpose - see issue #14/#15 discussion in the PR that added it).
+      const reply = await client.sendMessage(
+        { sessionId, message: trimmed, workspace },
+        (event) => {
+          if (!mounted.current) return;
+          setLiveEvents((events) => [...events, event]);
+        },
+        {
+          onRetry: ({ attempt }) => {
+            if (!mounted.current) return;
+            setStatusLine(`connection dropped, reconnecting (attempt ${attempt})...`);
+          },
+          onFallback: () => {
+            if (!mounted.current) return;
+            setStatusLine("streaming unavailable, falling back to a single reply...");
+          },
+        }
+      );
       if (!mounted.current) return;
       setHistory((h) => [...h, { role: "assistant", content: reply }]);
       onTurnComplete?.(trimmed);
@@ -113,6 +137,7 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
       if (mounted.current) {
         setBusy(false);
         setLiveEvents([]);
+        setStatusLine(undefined);
       }
     }
   }
@@ -146,6 +171,11 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
               <Text dimColor>{describeEvent(event)}</Text>
             </Box>
           ))}
+          {statusLine && (
+            <Box>
+              <Text color="yellow">{statusLine}</Text>
+            </Box>
+          )}
           <Box>
             <Spinner />
             <Text dimColor> working...</Text>

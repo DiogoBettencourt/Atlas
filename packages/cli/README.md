@@ -79,14 +79,28 @@ the picker forget, it doesn't delete anything server-side.
 
 ## What's not here yet
 
-- No retry/backoff if the connection drops mid-stream.
-- `AtlasClient.chat()` (the non-streaming `/chat` endpoint) exists and is
-  tested but isn't wired into the UI - `/chat/stream` is the only path
-  the app actually uses.
 - No `atlas config set` - the config file has to be hand-edited.
 - No way to rename/delete a session from the picker itself (or from
   `--list-sessions`) - it just grows (bounded at the 50 most recently
   used) until entries age out.
+
+## Connection resilience
+
+`App.tsx` calls `AtlasClient.sendMessage()` (not `chatStream()` directly)
+for every turn. It retries a dropped `/chat/stream` connection with
+backoff, and falls back to the non-streaming `/chat` if streaming still
+can't connect, but **only** when the connection failed before any
+response arrived at all (a network blip, or the server not up yet).
+
+That scope is deliberate, not a shortcut: Atlas's API has no idempotency
+keys, and by the time any bytes of a response have arrived, the agent
+loop has almost certainly already appended the message to the session
+and may have already run tools with real side effects (a git commit, a
+file write). Resending the same message past that point would risk
+duplicating that work rather than safely retrying it, so a mid-stream
+drop is surfaced as an error immediately instead - no retry, no
+fallback. See the doc comment on `sendMessage()` in `src/api/client.ts`
+for the full reasoning.
 
 ## Development
 

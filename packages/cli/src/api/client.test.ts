@@ -163,3 +163,168 @@ describe("AtlasClient.chatStream", () => {
     await expect(client.chatStream({ sessionId: "s1", message: "hi" }, () => {})).rejects.toThrow();
   });
 });
+
+// sendMessage() is what App.tsx actually calls (issues #14/#15). These
+// tests drive real connection drops - destroying the raw socket before
+// any response is written - rather than mocking fetch, so they exercise
+// the same "fetch() itself rejects" path a real dropped wifi connection
+// would hit.
+describe("AtlasClient.sendMessage", () => {
+  it("behaves exactly like chatStream on a first-try success - no retry, no fallback", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+        res.write(JSON.stringify({ type: "final", reply: "hi there" }) + "\n");
+        res.end();
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        const onRetry = () => {
+          throw new Error("onRetry should not fire on a first-try success");
+        };
+        const onFallback = () => {
+          throw new Error("onFallback should not fire on a first-try success");
+        };
+        const reply = await client.sendMessage({ sessionId: "s1", message: "hi" }, () => {}, {
+          onRetry,
+          onFallback,
+        });
+        expect(reply).toBe("hi there");
+      }
+    );
+  });
+
+  it("retries a connect-level drop with backoff, then succeeds on /chat/stream", async () => {
+    let streamAttempts = 0;
+    await withServer(
+      (req, res) => {
+        if (req.url === "/chat/stream") {
+          streamAttempts += 1;
+          if (streamAttempts <= 2) {
+            // Simulate a dropped connection: destroy the socket before
+            // any response is written at all, so fetch() itself rejects.
+            res.socket?.destroy();
+            return;
+          }
+          res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+          res.write(JSON.stringify({ type: "final", reply: "third time lucky" }) + "\n");
+          res.end();
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        const retries: Array<{ attempt: number; delayMs: number }> = [];
+        const reply = await client.sendMessage(
+          { sessionId: "s1", message: "hi" },
+          () => {},
+          {
+            retryDelayMs: 5,
+            onRetry: ({ attempt, delayMs }) => retries.push({ attempt, delayMs }),
+            onFallback: () => {
+              throw new Error("onFallback should not fire once a retry succeeds");
+            },
+          }
+        );
+        expect(reply).toBe("third time lucky");
+        expect(streamAttempts).toBe(3);
+        expect(retries).toEqual([
+          { attempt: 1, delayMs: 5 },
+          { attempt: 2, delayMs: 10 },
+        ]);
+      }
+    );
+  });
+
+  it("falls back to /chat once every /chat/stream attempt fails to connect", async () => {
+    let chatHits = 0;
+    await withServer(
+      (req, res) => {
+        if (req.url === "/chat/stream") {
+          res.socket?.destroy();
+          return;
+        }
+        if (req.url === "/chat") {
+          chatHits += 1;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              session_id: "s1",
+              reply: "fallback reply",
+              steps: [{ type: "tool_call", name: "read_file", arguments: { path: "x" } }],
+            })
+          );
+          return;
+        }
+        res.writeHead(404);
+        res.end();
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        const events: AgentEvent[] = [];
+        let fellBack = false;
+        const reply = await client.sendMessage(
+          { sessionId: "s1", message: "hi" },
+          (event) => events.push(event),
+          {
+            maxRetries: 1,
+            retryDelayMs: 5,
+            onFallback: () => {
+              fellBack = true;
+            },
+          }
+        );
+        expect(reply).toBe("fallback reply");
+        expect(fellBack).toBe(true);
+        expect(chatHits).toBe(1);
+        expect(events).toEqual([
+          { type: "tool_call", name: "read_file", arguments: { path: "x" } },
+          { type: "final", reply: "fallback reply" },
+        ]);
+      }
+    );
+  });
+
+  it("does NOT retry or fall back on a mid-stream failure - it rethrows immediately", async () => {
+    let chatHits = 0;
+    let streamAttempts = 0;
+    await withServer(
+      (req, res) => {
+        if (req.url === "/chat/stream") {
+          streamAttempts += 1;
+          res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+          res.write(JSON.stringify({ type: "iteration_start", iteration: 1, max_iterations: 20 }) + "\n");
+          // Drop the connection AFTER a response/body started - this is
+          // the case sendMessage() must treat as unsafe to retry, since
+          // the server has almost certainly already started (and maybe
+          // finished) processing this message.
+          res.socket?.destroy();
+          return;
+        }
+        if (req.url === "/chat") {
+          chatHits += 1;
+        }
+        res.writeHead(404);
+        res.end();
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(
+          client.sendMessage({ sessionId: "s1", message: "hi" }, () => {}, {
+            retryDelayMs: 5,
+            onRetry: () => {
+              throw new Error("onRetry must not fire on a mid-stream drop");
+            },
+            onFallback: () => {
+              throw new Error("onFallback must not fire on a mid-stream drop");
+            },
+          })
+        ).rejects.toThrow();
+        expect(streamAttempts).toBe(1);
+        expect(chatHits).toBe(0);
+      }
+    );
+  });
+});
