@@ -3,6 +3,7 @@
 #include "atlas/agent/LLMClient.hpp"
 #include "atlas/core/SessionManager.hpp"
 #include "atlas/tools/ToolManager.hpp"
+#include <cstddef>
 #include <functional>
 #include <string>
 
@@ -45,6 +46,21 @@ public:
 
     void setMaxIterations(unsigned int max_iterations) { max_iterations_ = max_iterations; }
 
+    // Bounds how many of a session's most recent messages are sent to the
+    // LLM on each turn. SessionManager still keeps (and persists) the
+    // full, untrimmed history regardless - this only bounds what chat()
+    // actually puts in the prompt. Without this, a long-running session's
+    // prompt size grows without bound: every past user/assistant/tool
+    // message gets resent on every single turn, so cost, latency, and
+    // eventually context-window overflow all grow linearly with
+    // conversation length forever. The default of 40 is a pragmatic
+    // window (roughly 15-20 user turns, depending on how many tool calls
+    // each one takes), not a tuned figure - raise or lower it based on
+    // the model's actual context window.
+    void setMaxHistoryMessages(std::size_t max_history_messages) {
+        max_history_messages_ = max_history_messages;
+    }
+
     // Attempts to pull a tool_calls array off an assistant message. Tries,
     // in order: native Ollama `tool_calls` JSON; a fenced ```json code
     // block inside `content`; a bare JSON object (or the first of several
@@ -57,12 +73,27 @@ public:
     // tests_manual/agent_extract_tool_calls_smoke.cpp.
     [[nodiscard]] static nlohmann::json extractToolCalls(const nlohmann::json& assistant_message);
 
+    // Returns the tail of `history` capped at `max_messages` entries, but
+    // only ever cuts on a "user"-role message boundary so a trimmed
+    // window never starts mid-turn - e.g. with an orphaned "tool" result
+    // whose preceding assistant tool_call got cut off, which some models
+    // handle poorly. Returns `history` unchanged if it's already within
+    // the cap. If no "user" boundary exists within the window at all
+    // (max_messages smaller than a single turn takes, or no user message
+    // in that span), falls back to a hard cut at exactly max_messages
+    // rather than sending nothing. Public and static, like
+    // extractToolCalls, so it can be unit-tested directly - see
+    // tests_manual/agent_trim_history_smoke.cpp.
+    [[nodiscard]] static nlohmann::json trimHistory(const nlohmann::json& history,
+                                                     std::size_t max_messages);
+
 private:
     LLMClient& llm_client_;
     tools::ToolManager& tool_manager_;
     core::SessionManager& session_manager_;
     std::string model_name_;
     unsigned int max_iterations_ = 20;
+    std::size_t max_history_messages_ = 40;
 };
 
 } // namespace atlas::agent

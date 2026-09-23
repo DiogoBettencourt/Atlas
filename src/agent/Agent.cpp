@@ -128,93 +128,126 @@ nlohmann::json Agent::extractToolCalls(const nlohmann::json& assistant_message) 
     return nlohmann::json::array();
 }
 
+nlohmann::json Agent::trimHistory(const nlohmann::json& history, std::size_t max_messages) {
+    if (!history.is_array() || history.size() <= max_messages) {
+        return history;
+    }
+
+    std::size_t start = history.size() - max_messages;
+
+    // Walk forward to the next "user" message so the trimmed window never
+    // starts mid-turn - see the doc comment on the declaration for why.
+    std::size_t boundary = start;
+    while (boundary < history.size() && history[boundary].value("role", std::string{}) != "user") {
+        ++boundary;
+    }
+    if (boundary < history.size()) {
+        start = boundary;
+    }
+    // else: no "user" message anywhere in the window - fall back to the
+    // hard cut at the original `start` rather than sending nothing.
+
+    nlohmann::json trimmed = nlohmann::json::array();
+    for (std::size_t i = start; i < history.size(); ++i) {
+        trimmed.push_back(history[i]);
+    }
+    return trimmed;
+}
+
 std::string Agent::chat(const std::string& message,
-    const std::string& session_id,
-    const std::string& workspace_root,
-    const EventCallback& on_event) {
-auto emit = [&on_event](const nlohmann::json& event) {
-if (on_event) on_event(event);
-};
+                         const std::string& session_id,
+                         const std::string& workspace_root,
+                         const EventCallback& on_event) {
+    auto emit = [&on_event](const nlohmann::json& event) {
+        if (on_event) on_event(event);
+    };
 
-session_manager_.appendMessage(session_id, {{"role", "user"}, {"content", message}});
+    session_manager_.appendMessage(session_id, {{"role", "user"}, {"content", message}});
 
-for (unsigned int iteration = 0; iteration < max_iterations_; ++iteration) {
-emit({{"type", "iteration_start"}, {"iteration", iteration + 1}, {"max_iterations", max_iterations_}});
+    for (unsigned int iteration = 0; iteration < max_iterations_; ++iteration) {
+        emit({{"type", "iteration_start"},
+              {"iteration", iteration + 1},
+              {"max_iterations", max_iterations_}});
 
-nlohmann::json history = session_manager_.getHistory(session_id);
+        // SessionManager keeps (and persists) the session's full history
+        // regardless of what we do here - trimHistory only bounds what
+        // actually gets sent to the LLM this turn. See the doc comment on
+        // setMaxHistoryMessages for why this exists.
+        nlohmann::json history = trimHistory(session_manager_.getHistory(session_id),
+                                              max_history_messages_);
 
-// ---------------------------------------------------------
-// ARCHITECT FIX: Inject Strict System Prompt
-// ---------------------------------------------------------
-nlohmann::json system_msg = {
-{"role", "system"},
-{"content", "You are Atlas, an expert C++20 software architect. "
-   "CRITICAL RULE: If the user simply greets you, asks a general question, or does not require file operations, respond naturally in plain text WITHOUT invoking any tools. "
-   "Only use tools when explicitly necessary to read, search, or write code."}
-};
-history.insert(history.begin(), system_msg);
+        nlohmann::json system_msg = {
+            {"role", "system"},
+            {"content", "You are Atlas, an expert C++20 software architect. "
+                        "CRITICAL RULE: If the user simply greets you, asks a general "
+                        "question, or does not require file operations, respond "
+                        "naturally in plain text WITHOUT invoking any tools. Only use "
+                        "tools when explicitly necessary to read, search, or write "
+                        "code."}
+        };
+        history.insert(history.begin(), system_msg);
 
-nlohmann::json assistant_message;
-try {
-assistant_message = llm_client_.chat(model_name_, history, tool_manager_.schemasJson());
-} catch (const std::exception& e) {
-std::string error_msg = std::string("Agent error: ") + e.what();
-emit({{"type", "error"}, {"message", error_msg}});
-return error_msg;
-}
+        nlohmann::json assistant_message;
+        try {
+            assistant_message = llm_client_.chat(model_name_, history, tool_manager_.schemasJson());
+        } catch (const std::exception& e) {
+            std::string error_msg = std::string("Agent error: ") + e.what();
+            emit({{"type", "error"}, {"message", error_msg}});
+            return error_msg;
+        }
 
-session_manager_.appendMessage(session_id, assistant_message);
+        session_manager_.appendMessage(session_id, assistant_message);
 
-nlohmann::json tool_calls = extractToolCalls(assistant_message);
-if (tool_calls.empty()) {
-std::string reply = assistant_message.value("content", std::string{});
-emit({{"type", "final"}, {"reply", reply}});
-return reply;
-}
+        nlohmann::json tool_calls = extractToolCalls(assistant_message);
+        if (tool_calls.empty()) {
+            std::string reply = assistant_message.value("content", std::string{});
+            emit({{"type", "final"}, {"reply", reply}});
+            return reply;
+        }
 
-std::string interim_content = assistant_message.value("content", std::string{});
-if (!interim_content.empty()) {
-emit({{"type", "assistant_thought"}, {"content", interim_content}});
-}
+        std::string interim_content = assistant_message.value("content", std::string{});
+        if (!interim_content.empty()) {
+            emit({{"type", "assistant_thought"}, {"content", interim_content}});
+        }
 
-for (const auto& call : tool_calls) {
-std::string tool_name;
-nlohmann::json arguments = nlohmann::json::object();
+        for (const auto& call : tool_calls) {
+            std::string tool_name;
+            nlohmann::json arguments = nlohmann::json::object();
 
-if (call.contains("function")) {
-tool_name = call["function"].value("name", std::string{});
-auto raw_args = call["function"].value("arguments", nlohmann::json::object());
-if (raw_args.is_string()) {
-auto parsed = nlohmann::json::parse(raw_args.get<std::string>(), nullptr, false);
-arguments = parsed.is_discarded() ? nlohmann::json::object() : parsed;
-} else {
-arguments = raw_args;
-}
-}
+            if (call.contains("function")) {
+                tool_name = call["function"].value("name", std::string{});
+                auto raw_args = call["function"].value("arguments", nlohmann::json::object());
+                if (raw_args.is_string()) {
+                    auto parsed = nlohmann::json::parse(raw_args.get<std::string>(), nullptr, false);
+                    arguments = parsed.is_discarded() ? nlohmann::json::object() : parsed;
+                } else {
+                    arguments = raw_args;
+                }
+            }
 
-emit({{"type", "tool_call"}, {"name", tool_name}, {"arguments", arguments}});
+            emit({{"type", "tool_call"}, {"name", tool_name}, {"arguments", arguments}});
 
-nlohmann::json result = tool_name.empty()
-? nlohmann::json{{"error", "malformed tool call: missing function name"}}
-: tool_manager_.execute(tool_name, arguments, workspace_root);
+            nlohmann::json result = tool_name.empty()
+                ? nlohmann::json{{"error", "malformed tool call: missing function name"}}
+                : tool_manager_.execute(tool_name, arguments, workspace_root);
 
-emit({{"type", "tool_result"}, {"name", tool_name}, {"result", result}});
+            emit({{"type", "tool_result"}, {"name", tool_name}, {"result", result}});
 
-nlohmann::json tool_message{
-{"role", "tool"},
-{"content", result.dump()}
-};
-if (!tool_name.empty()) {
-tool_message["name"] = tool_name;
-}
-session_manager_.appendMessage(session_id, tool_message);
-}
-}
+            nlohmann::json tool_message{
+                {"role", "tool"},
+                {"content", result.dump()}
+            };
+            if (!tool_name.empty()) {
+                tool_message["name"] = tool_name;
+            }
+            session_manager_.appendMessage(session_id, tool_message);
+        }
+    }
 
-std::string give_up = "Agent stopped: exceeded maximum tool-call iterations ("
-+ std::to_string(max_iterations_) + ") without a final answer.";
-emit({{"type", "error"}, {"message", give_up}});
-return give_up;
+    std::string give_up = "Agent stopped: exceeded maximum tool-call iterations (" +
+                           std::to_string(max_iterations_) + ") without a final answer.";
+    emit({{"type", "error"}, {"message", give_up}});
+    return give_up;
 }
 
 } // namespace atlas::agent
