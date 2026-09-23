@@ -223,8 +223,28 @@ Atlas/
 │   ├── tools/            # Tool interface, ToolManager, built-in tools
 │   ├── agent/            # LLMClient (Ollama HTTP client), Agent (ReAct loop)
 │   └── api/              # APIServer (cpp-httplib REST endpoint)
-└── src/                  # implementations, same subfolders as above
+├── src/                  # implementations, same subfolders as above
+└── packages/              # client applications, built separately from the
+    └── cli/                # C++ backend above (own package.json/CI per package)
+        # AtlasCLI - a terminal client, see packages/cli/README.md
 ```
+
+Atlas itself is just the backend: a headless REST server with no UI of its
+own. `packages/` is where clients that talk to it over that REST API live,
+kept in this same repo (a monorepo) rather than split out, mainly so the
+`git`/`github_pr` self-improvement tools - which are scoped to a single
+`--self-repo` - can read and modify client code the same way they do the
+backend. Each package builds and tests independently (its own
+`package.json`, its own path-filtered CI workflow) and is otherwise
+unrelated to CMake.
+
+## Clients
+
+- **[AtlasCLI](packages/cli/README.md)** - a terminal client (Node + Ink),
+  styled after tools like GitHub Copilot CLI: a streaming REPL over
+  `POST /chat/stream`. The first client built against this API; see its
+  README for setup and current limitations.
+- **AtlasUI** - a planned React-based graphical client, not started yet.
 
 ## Notes / known limitations
 
