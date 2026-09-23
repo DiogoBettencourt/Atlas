@@ -1,0 +1,40 @@
+name: CLI CI
+
+on:
+  push:
+    branches: [main, master, dev]
+    paths:
+      - "packages/cli/**"
+      - ".github/workflows/cli-ci.yml"
+  pull_request:
+    paths:
+      - "packages/cli/**"
+      - ".github/workflows/cli-ci.yml"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/cli
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: packages/cli/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
