@@ -14,6 +14,11 @@ export interface AppProps {
   sessionId: string;
   workspace?: string;
   serverLabel: string;
+  // Fired once per successfully completed turn (not on error) with the
+  // user's message for that turn - lets the caller (cli.ts) persist the
+  // session to the local picker registry without App needing to know
+  // that registry exists.
+  onTurnComplete?: (message: string) => void;
 }
 
 interface Turn {
@@ -56,7 +61,7 @@ function describeEvent(event: AgentEvent): string {
   }
 }
 
-export default function App({ client, sessionId, workspace, serverLabel }: AppProps): JSX.Element {
+export default function App({ client, sessionId, workspace, serverLabel, onTurnComplete }: AppProps): JSX.Element {
   const { exit } = useApp();
   const [history, setHistory] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -100,6 +105,7 @@ export default function App({ client, sessionId, workspace, serverLabel }: AppPr
       });
       if (!mounted.current) return;
       setHistory((h) => [...h, { role: "assistant", content: reply }]);
+      onTurnComplete?.(trimmed);
     } catch (err) {
       if (!mounted.current) return;
       setError(err instanceof Error ? err.message : String(err));
