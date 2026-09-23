@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace atlas::agent {
 
@@ -55,10 +57,15 @@ public:
     // the full, uncompacted history regardless; this only bounds what
     // chat() actually puts in the prompt, and decides when the part that
     // falls out of that bound gets remembered as a summary versus hard-
-    // dropped (which only happens if the summarization call itself fails -
-    // see chat()'s implementation). The default of 40 is a pragmatic
-    // window (roughly 15-20 user turns, depending on how many tool calls
-    // each one takes), not a tuned figure - raise or lower it based on the
+    // dropped (which only happens if a chunk's summarization call itself
+    // fails - see chat()'s implementation and computeCompactionChunks).
+    // This same number also caps how many messages go into any single
+    // summarization call: the aged-out prefix is folded in one chunk of
+    // at most this many messages at a time, however large the total
+    // backlog is, rather than one call sized to the whole backlog - see
+    // computeCompactionChunks. The default of 40 is a pragmatic window
+    // (roughly 15-20 user turns, depending on how many tool calls each
+    // one takes), not a tuned figure - raise or lower it based on the
     // model's actual context window.
     void setMaxHistoryMessages(std::size_t max_history_messages) {
         max_history_messages_ = max_history_messages;
@@ -105,11 +112,42 @@ public:
     // established instead of each starting over and losing it. Returns
     // the `messages` array ready to hand to LLMClient::chat with default
     // (empty) tools - this is a plain summarization call, not a
-    // tool-using turn. Public and static, like extractToolCalls/
-    // trimHistory, so the prompt shape can be unit-tested without a live
-    // LLMClient - see tests_manual/agent_compaction_smoke.cpp.
+    // tool-using turn. `messages_to_summarize` is expected to already be
+    // a bounded-size chunk (see computeCompactionChunks) - this function
+    // itself doesn't limit how much it's handed, since bounding that is
+    // chat()'s job, not the prompt-building step's. Public and static,
+    // like extractToolCalls/trimHistory, so the prompt shape can be
+    // unit-tested without a live LLMClient - see
+    // tests_manual/agent_compaction_smoke.cpp.
     [[nodiscard]] static nlohmann::json buildCompactionRequest(const std::string& previous_summary,
                                                                  const nlohmann::json& messages_to_summarize);
+
+    // Splits a backlog of `total_messages_to_summarize` aged-out messages
+    // into a sequence of chunks, each at most `chunk_size` messages, and
+    // returns each chunk as a half-open [start, end) index range relative
+    // to the start of that backlog, in order, covering it completely with
+    // no gaps or overlaps.
+    //
+    // This exists because a session's very first compaction can have an
+    // arbitrarily large backlog to fold in - most commonly a session that
+    // already had a large history before compaction existed at all (or
+    // one whose bound was recently lowered). Summarizing that whole
+    // backlog in a single LLM call would need a prompt roughly as large
+    // as the history compaction exists to bound in the first place, and
+    // could itself overflow the model's context window - the exact
+    // failure this function exists to avoid. chat() summarizes one chunk
+    // at a time instead, persisting progress after each one, so a
+    // backlog of any size is handled in bounded-size steps (spread over
+    // one or more turns if needed) rather than one unbounded call.
+    //
+    // Returns an empty vector if `total_messages_to_summarize` is 0. A
+    // `chunk_size` of 0 is treated as 1 rather than looping forever.
+    // Pure and static, like the other prompt-shaping helpers above, so
+    // the chunk boundaries themselves are unit-testable without a live
+    // LLM or real message data - see
+    // tests_manual/agent_compaction_chunking_smoke.cpp.
+    [[nodiscard]] static std::vector<std::pair<std::size_t, std::size_t>> computeCompactionChunks(
+        std::size_t total_messages_to_summarize, std::size_t chunk_size);
 
 private:
     LLMClient& llm_client_;

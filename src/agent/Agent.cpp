@@ -187,6 +187,25 @@ nlohmann::json Agent::buildCompactionRequest(const std::string& previous_summary
     });
 }
 
+std::vector<std::pair<std::size_t, std::size_t>> Agent::computeCompactionChunks(
+    std::size_t total_messages_to_summarize, std::size_t chunk_size) {
+    std::vector<std::pair<std::size_t, std::size_t>> chunks;
+    if (total_messages_to_summarize == 0) {
+        return chunks;
+    }
+    if (chunk_size == 0) {
+        chunk_size = 1; // guard against an infinite loop on a zero bound
+    }
+
+    std::size_t start = 0;
+    while (start < total_messages_to_summarize) {
+        std::size_t end = std::min(start + chunk_size, total_messages_to_summarize);
+        chunks.emplace_back(start, end);
+        start = end;
+    }
+    return chunks;
+}
+
 std::string Agent::chat(const std::string& message,
                          const std::string& session_id,
                          const std::string& workspace_root,
@@ -211,14 +230,21 @@ std::string Agent::chat(const std::string& message,
         //      as-is (plus the persisted summary, if any, folded into the
         //      system prompt below).
         //   3. If it's grown past the bound, fold the aged-out prefix into
-        //      an updated summary via one extra LLM call instead of just
-        //      dropping it, and persist the new checkpoint so this only
-        //      has to happen again once the tail regrows. If that
-        //      summarization call itself fails for any reason, fall back
-        //      to hard-dropping the prefix for this turn only (the old
-        //      trimHistory-only behavior) rather than failing the user's
-        //      actual request over it - it'll simply be retried next time
-        //      the tail crosses the bound again.
+        //      an updated summary instead of just dropping it, one bounded
+        //      -size chunk at a time (see computeCompactionChunks) rather
+        //      than a single call sized to the whole aged-out prefix -
+        //      that prefix can be arbitrarily large (most commonly: the
+        //      very first compaction on a session that already had a
+        //      large history before compaction existed), and one call
+        //      sized to all of it could itself overflow the model's
+        //      context window. Progress is persisted after every chunk,
+        //      not just at the end, so if a later chunk's call fails, the
+        //      chunks that already succeeded aren't lost or re-done - the
+        //      next turn that crosses the bound again resumes exactly
+        //      where this one left off. If even the *first* chunk fails,
+        //      this turn simply proceeds with the plain hard-drop
+        //      behavior (the old trimHistory-only fallback), and the same
+        //      chunk is retried next time.
         nlohmann::json full_history = session_manager_.getHistory(session_id);
         auto checkpoint = session_manager_.getSummary(session_id);
         std::size_t covers = checkpoint ? std::min(checkpoint->covers_through_index, full_history.size())
@@ -231,28 +257,34 @@ std::string Agent::chat(const std::string& message,
 
         nlohmann::json history = trimHistory(tail, max_history_messages_);
         if (history.size() < tail.size()) {
-            std::size_t cut = tail.size() - history.size();
-            nlohmann::json to_summarize = nlohmann::json::array();
-            for (std::size_t i = 0; i < cut; ++i) {
-                to_summarize.push_back(tail[i]);
-            }
+            std::size_t total_cut = tail.size() - history.size();
+            std::string running_summary = checkpoint ? checkpoint->summary : std::string{};
 
-            try {
-                std::string previous_summary = checkpoint ? checkpoint->summary : std::string{};
-                nlohmann::json summarization_request =
-                    buildCompactionRequest(previous_summary, to_summarize);
-                nlohmann::json summary_reply = llm_client_.chat(model_name_, summarization_request);
+            for (const auto& [chunk_start, chunk_end] : computeCompactionChunks(total_cut, max_history_messages_)) {
+                nlohmann::json chunk = nlohmann::json::array();
+                for (std::size_t i = chunk_start; i < chunk_end; ++i) {
+                    chunk.push_back(tail[i]);
+                }
 
-                core::SessionSummary new_checkpoint;
-                new_checkpoint.covers_through_index = covers + cut;
-                new_checkpoint.summary = summary_reply.value("content", previous_summary);
-                session_manager_.setSummary(session_id, new_checkpoint);
-                checkpoint = new_checkpoint;
-            } catch (const std::exception&) {
-                // Best-effort: the aged-out prefix was already excluded
-                // from `history` above via trimHistory, so this turn
-                // simply proceeds with the plain hard-drop behavior
-                // instead of the summarized one.
+                try {
+                    nlohmann::json summarization_request = buildCompactionRequest(running_summary, chunk);
+                    nlohmann::json summary_reply = llm_client_.chat(model_name_, summarization_request);
+                    running_summary = summary_reply.value("content", running_summary);
+
+                    core::SessionSummary progress_checkpoint;
+                    progress_checkpoint.covers_through_index = covers + chunk_end;
+                    progress_checkpoint.summary = running_summary;
+                    session_manager_.setSummary(session_id, progress_checkpoint);
+                    checkpoint = progress_checkpoint;
+                } catch (const std::exception&) {
+                    // Best-effort: stop chunking for this turn. Whatever
+                    // chunks already succeeded above are already
+                    // persisted; `history` (the tail already trimmed to
+                    // the bound) still proceeds as this turn's actual
+                    // prompt either way, so the user's request isn't
+                    // blocked on compaction succeeding.
+                    break;
+                }
             }
         }
 
