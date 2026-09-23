@@ -46,17 +46,20 @@ public:
 
     void setMaxIterations(unsigned int max_iterations) { max_iterations_ = max_iterations; }
 
-    // Bounds how many of a session's most recent messages are sent to the
-    // LLM on each turn. SessionManager still keeps (and persists) the
-    // full, untrimmed history regardless - this only bounds what chat()
-    // actually puts in the prompt. Without this, a long-running session's
-    // prompt size grows without bound: every past user/assistant/tool
-    // message gets resent on every single turn, so cost, latency, and
-    // eventually context-window overflow all grow linearly with
-    // conversation length forever. The default of 40 is a pragmatic
+    // Bounds how many of a session's most recent raw messages are sent to
+    // the LLM verbatim each turn, and is also the trigger point for
+    // compaction: once the untrimmed tail of a session's history grows
+    // past this many messages, chat() folds the aged-out prefix into a
+    // persisted summary (see SessionSummary in SessionManager.hpp) instead
+    // of just discarding it. SessionManager still keeps - and persists -
+    // the full, uncompacted history regardless; this only bounds what
+    // chat() actually puts in the prompt, and decides when the part that
+    // falls out of that bound gets remembered as a summary versus hard-
+    // dropped (which only happens if the summarization call itself fails -
+    // see chat()'s implementation). The default of 40 is a pragmatic
     // window (roughly 15-20 user turns, depending on how many tool calls
-    // each one takes), not a tuned figure - raise or lower it based on
-    // the model's actual context window.
+    // each one takes), not a tuned figure - raise or lower it based on the
+    // model's actual context window.
     void setMaxHistoryMessages(std::size_t max_history_messages) {
         max_history_messages_ = max_history_messages;
     }
@@ -81,11 +84,32 @@ public:
     // the cap. If no "user" boundary exists within the window at all
     // (max_messages smaller than a single turn takes, or no user message
     // in that span), falls back to a hard cut at exactly max_messages
-    // rather than sending nothing. Public and static, like
+    // rather than sending nothing.
+    //
+    // chat() uses this to decide the keep/fold split during compaction:
+    // whatever this trims away is exactly the portion that gets folded
+    // into the session's persisted summary rather than discarded outright
+    // (see setMaxHistoryMessages). Public and static, like
     // extractToolCalls, so it can be unit-tested directly - see
     // tests_manual/agent_trim_history_smoke.cpp.
     [[nodiscard]] static nlohmann::json trimHistory(const nlohmann::json& history,
                                                      std::size_t max_messages);
+
+    // Builds the single-shot LLM request used to (re)compute a session's
+    // compaction summary: an instruction prompt asking the model to fold
+    // `messages_to_summarize` into a concise summary that preserves what
+    // the user asked for, decisions made, file paths and code changes
+    // discussed, and any still-open tasks. `previous_summary` (pass an
+    // empty string if there isn't one yet) is threaded into the prompt so
+    // repeated compactions accumulate what earlier ones already
+    // established instead of each starting over and losing it. Returns
+    // the `messages` array ready to hand to LLMClient::chat with default
+    // (empty) tools - this is a plain summarization call, not a
+    // tool-using turn. Public and static, like extractToolCalls/
+    // trimHistory, so the prompt shape can be unit-tested without a live
+    // LLMClient - see tests_manual/agent_compaction_smoke.cpp.
+    [[nodiscard]] static nlohmann::json buildCompactionRequest(const std::string& previous_summary,
+                                                                 const nlohmann::json& messages_to_summarize);
 
 private:
     LLMClient& llm_client_;
