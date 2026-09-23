@@ -16,7 +16,30 @@ polished product yet. See "What's not here yet" below.
 - A running Atlas server (see the [root README](../../README.md#run)) -
   the CLI is a pure client, it doesn't embed or launch Atlas itself.
 
+## Install
+
+Published to npm as a scoped package, with an `atlas` command:
+
+```bash
+npm install -g @diogobettencourt/atlas-cli
+atlas --server http://127.0.0.1:8080
+```
+
+No published version yet? Build and install straight from a clone - this
+is exactly what `npm publish` would ship, so it's a faithful way to try
+it before there's a release:
+
+```bash
+npm install
+npm run build
+npm pack
+npm install -g ./diogobettencourt-atlas-cli-*.tgz
+atlas --server http://127.0.0.1:8080
+```
+
 ## Use
+
+For local development (auto-reloads via `tsx`, no build step):
 
 ```bash
 npm install
@@ -83,6 +106,10 @@ the picker forget, it doesn't delete anything server-side.
 - No way to rename/delete a session from the picker itself (or from
   `--list-sessions`) - it just grows (bounded at the 50 most recently
   used) until entries age out.
+- No standalone binary (a no-Node-required install via `pkg`/`nexe`/Node's
+  built-in Single Executable Applications). npm is the only distribution
+  channel for now; a binary build is worth revisiting if someone without
+  Node needs to run this.
 
 ## Connection resilience
 
