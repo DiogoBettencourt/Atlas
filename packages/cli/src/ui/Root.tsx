@@ -4,7 +4,7 @@
 // full-unmount screen shown once before App ever rendered - now
 // switching sessions is just another tab, reachable at any time with
 // Tab, and nothing about the running chat is torn down to get there.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { randomUUID } from "node:crypto";
 import { Box, Text, useInput } from "ink";
 import type { JSX } from "react";
@@ -39,6 +39,25 @@ export default function Root({ client, initialSessionId, initialTab, server, wor
   // immediately, not just after restarting the CLI.
   const [sessions, setSessions] = useState<SessionRecord[]>(() => sessionsFor(server, workspace));
 
+  // Sizes the whole app to the real terminal, not a fixed guess - this
+  // is what makes it read as an actual full-screen app rather than a
+  // small card floating in the corner of a big window. Falls back to a
+  // conservative 80x24 when stdout isn't a real TTY (piped output, some
+  // test runners) where .columns/.rows are undefined.
+  const [dimensions, setDimensions] = useState({
+    columns: process.stdout.columns || 80,
+    rows: process.stdout.rows || 24,
+  });
+  useEffect(() => {
+    function onResize(): void {
+      setDimensions({ columns: process.stdout.columns || 80, rows: process.stdout.rows || 24 });
+    }
+    process.stdout.on("resize", onResize);
+    return () => {
+      process.stdout.off("resize", onResize);
+    };
+  }, []);
+
   useInput((_input, key) => {
     if (key.tab) {
       setTab((t) => {
@@ -49,33 +68,41 @@ export default function Root({ client, initialSessionId, initialTab, server, wor
     }
   });
 
+  // Root itself adds 1 column of paddingX on each side below - the
+  // content width passed to App has to account for that, or its
+  // borders would run 2 columns past the terminal edge.
+  const contentWidth = Math.max(dimensions.columns - 2, 20);
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={dimensions.columns} height={dimensions.rows} paddingX={1}>
       <Box marginBottom={1}>
         <Tab label="Chat" active={tab === "chat"} />
         <Text> </Text>
         <Tab label="Sessions" active={tab === "sessions"} />
       </Box>
 
-      {tab === "chat" ? (
-        <App
-          client={client}
-          sessionId={sessionId}
-          workspace={workspace}
-          serverLabel={server}
-          onTurnComplete={(message) => {
-            recordTurn({ id: sessionId, server, workspace, message });
-          }}
-        />
-      ) : (
-        <SessionPicker
-          sessions={sessions}
-          onSelect={(id) => {
-            setSessionId(id ?? randomUUID());
-            setTab("chat");
-          }}
-        />
-      )}
+      <Box flexDirection="column" flexGrow={1}>
+        {tab === "chat" ? (
+          <App
+            client={client}
+            sessionId={sessionId}
+            workspace={workspace}
+            serverLabel={server}
+            width={contentWidth}
+            onTurnComplete={(message) => {
+              recordTurn({ id: sessionId, server, workspace, message });
+            }}
+          />
+        ) : (
+          <SessionPicker
+            sessions={sessions}
+            onSelect={(id) => {
+              setSessionId(id ?? randomUUID());
+              setTab("chat");
+            }}
+          />
+        )}
+      </Box>
 
       <Box marginTop={1}>
         <Text dimColor>

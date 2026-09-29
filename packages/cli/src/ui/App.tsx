@@ -14,6 +14,15 @@ export interface AppProps {
   sessionId: string;
   workspace?: string;
   serverLabel: string;
+  // Explicit width (in columns) for the bordered banner/input boxes,
+  // computed by Root from the real terminal size. Without this, Ink's
+  // border-drawing box stretches to fill its flex parent but the plain
+  // <Text> rows inside it don't, so the border ends up wider than the
+  // content it's supposedly wrapping - this pins both to the same
+  // number instead of relying on that stretch behavior. Optional with
+  // a reasonable fallback so App still renders sensibly when used
+  // outside Root (as the existing integration test does).
+  width?: number;
   // Fired once per successfully completed turn (not on error) with the
   // user's message for that turn - lets the caller (cli.ts) persist the
   // session to the local picker registry without App needing to know
@@ -61,7 +70,7 @@ function describeEvent(event: AgentEvent): string {
   }
 }
 
-export default function App({ client, sessionId, workspace, serverLabel, onTurnComplete }: AppProps): JSX.Element {
+export default function App({ client, sessionId, workspace, serverLabel, width = 76, onTurnComplete }: AppProps): JSX.Element {
   const { exit } = useApp();
   const [history, setHistory] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
@@ -143,8 +152,8 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
   }
 
   return (
-    <Box flexDirection="column">
-      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={0} marginBottom={1} width={72}>
+    <Box flexDirection="column" flexGrow={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={0} marginBottom={1} width={width}>
         <Text bold color="cyan">
           ATLAS
         </Text>
@@ -168,6 +177,7 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
         </Box>
       </Box>
 
+      <Box flexDirection="column" flexGrow={1}>
       {history.map((turn, i) => (
         <Box key={i} marginBottom={turn.role === "assistant" ? 1 : 0}>
           <Text color={turn.role === "user" ? "green" : "white"} bold={turn.role === "user"}>
@@ -201,8 +211,9 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
           <Text color="red">error: {error}</Text>
         </Box>
       )}
+      </Box>
 
-      <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1} width={72}>
+      <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1} width={width}>
         <Text color="green" bold>
           {"> "}
         </Text>
