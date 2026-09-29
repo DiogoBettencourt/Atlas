@@ -10,9 +10,8 @@ import { render } from "ink";
 import React from "react";
 import { AtlasClient } from "./api/client.js";
 import { loadConfig, resolveDefaults } from "./config/config.js";
-import { recordTurn, sessionsFor, type SessionRecord } from "./config/sessions.js";
-import App from "./ui/App.js";
-import SessionPicker from "./ui/SessionPicker.js";
+import { sessionsFor } from "./config/sessions.js";
+import Root, { type TabId } from "./ui/Root.js";
 
 interface CliOptions {
   server: string;
@@ -37,31 +36,37 @@ program
 
 const options = program.opts<CliOptions>();
 
-// Renders the picker and resolves once the user has chosen - either an
-// existing session id, or undefined to start a new one.
-function pickSession(sessions: SessionRecord[]): Promise<string | undefined> {
-  return new Promise((resolve) => {
-    const { unmount } = render(
-      React.createElement(SessionPicker, {
-        sessions,
-        onSelect: (id) => {
-          unmount();
-          resolve(id);
-        },
-      })
-    );
-  });
-}
-
-async function resolveSessionId(): Promise<string> {
-  if (options.session) return options.session;
-  if (options.new) return randomUUID();
+// Resolves which session to start on, and which tab to land in. A
+// specific --session or --new always goes straight to the Chat tab -
+// only the ambiguous "no flag given" case opens on the Sessions tab
+// (mirroring the old picker-first behavior), and only when there's
+// actually something to pick from.
+function resolveStart(): { sessionId: string; tab: TabId } {
+  if (options.session) return { sessionId: options.session, tab: "chat" };
+  if (options.new) return { sessionId: randomUUID(), tab: "chat" };
 
   const candidates = sessionsFor(options.server, options.workspace);
-  if (candidates.length === 0) return randomUUID(); // nothing to pick from yet - skip straight in
+  // The placeholder id here is never shown - the Sessions tab replaces
+  // it the moment something is picked, or the user starts typing after
+  // switching back to Chat without picking, in which case it's exactly
+  // what --new would have generated anyway.
+  if (candidates.length === 0) return { sessionId: randomUUID(), tab: "chat" };
+  return { sessionId: randomUUID(), tab: "sessions" };
+}
 
-  const picked = await pickSession(candidates);
-  return picked ?? randomUUID();
+// Takes over the whole terminal (alternate screen buffer, like less,
+// vim, or Claude Code's own TUI) instead of scrolling in the normal
+// buffer, and always hands the terminal back in a clean state -
+// including on Ctrl+C or an uncaught crash - so a broken exit never
+// leaves the user's shell stuck on a blank alt-screen with a hidden
+// cursor.
+const ENTER_ALT_SCREEN = "\x1b[?1049h";
+const EXIT_ALT_SCREEN = "\x1b[?1049l";
+const HIDE_CURSOR = "\x1b[?25l";
+const SHOW_CURSOR = "\x1b[?25h";
+
+function restoreTerminal(): void {
+  process.stdout.write(SHOW_CURSOR + EXIT_ALT_SCREEN);
 }
 
 async function main(): Promise<void> {
@@ -79,23 +84,29 @@ async function main(): Promise<void> {
     return;
   }
 
-  const sessionId = await resolveSessionId();
+  const { sessionId, tab } = resolveStart();
   const client = new AtlasClient({ baseUrl: options.server });
 
+  process.on("exit", restoreTerminal);
+  process.on("SIGINT", () => {
+    restoreTerminal();
+    process.exit(130);
+  });
+  process.stdout.write(ENTER_ALT_SCREEN + HIDE_CURSOR);
+
   render(
-    React.createElement(App, {
+    React.createElement(Root, {
       client,
-      sessionId,
+      initialSessionId: sessionId,
+      initialTab: tab,
+      server: options.server,
       workspace: options.workspace,
-      serverLabel: options.server,
-      onTurnComplete: (message: string) => {
-        recordTurn({ id: sessionId, server: options.server, workspace: options.workspace, message });
-      },
     })
   );
 }
 
 main().catch((err: unknown) => {
+  restoreTerminal();
   console.error(err instanceof Error ? err.message : String(err));
   process.exitCode = 1;
 });

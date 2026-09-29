@@ -66,6 +66,11 @@ hardcoded default.
 Type a message and press Enter. Tool calls and results stream in live as
 the agent works; `/exit` or `/quit` (or Ctrl+C) quits.
 
+The CLI takes over the whole terminal (an alternate screen buffer, like
+`vim` or `less` - your normal scrollback is untouched and comes right
+back on exit) and shows two tabs at the top, **Chat** and **Sessions**;
+press `Tab` at any time to switch between them, including mid-turn.
+
 ### Config file
 
 Written by hand for now (no `atlas config set` yet) at:
@@ -85,13 +90,18 @@ Both fields are optional; either can be set independently. A malformed
 file is reported as a warning on startup and ignored (falls back to
 defaults) rather than crashing the CLI.
 
-### Session picker
+### Sessions tab
 
-Starting the CLI without `--session`/`--new` shows a picker (↑↓ then
-Enter) when there's at least one known session for the current
+Starting the CLI without `--session`/`--new` opens on the **Sessions**
+tab (↑↓ then Enter to pick, or `Tab` to jump to Chat instead) when
+there's at least one known session for the current
 `--server`/`--workspace` - "start a new session" is always the first
-option. On first run, or after `--list-sessions` shows nothing, there's
-nothing to pick from yet, so it skips straight to a new session.
+row. On first run, or after `--list-sessions` shows nothing, there's
+nothing to pick from yet, so it opens straight on Chat with a fresh
+session. `--session <id>` and `--new` also skip straight to Chat.
+Picking a session (or starting a new one) from the Sessions tab jumps
+back to Chat automatically; nothing about an in-progress conversation
+is lost by switching tabs to browse sessions and back.
 
 This is a local, client-side index only (next to the config file, at
 `sessions.json` in the same directory) - it just remembers session ids

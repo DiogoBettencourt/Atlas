@@ -214,9 +214,6 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
           placeholder="Type a message, or /exit to quit"
         />
       </Box>
-      <Box marginTop={1}>
-        <Text dimColor>Ctrl+C exit {"\u00b7"} /exit or /quit to leave</Text>
-      </Box>
     </Box>
   );
 }
