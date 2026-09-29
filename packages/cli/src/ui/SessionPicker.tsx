@@ -35,13 +35,6 @@ export default function SessionPicker({ sessions, onSelect }: SessionPickerProps
 
   return (
     <Box flexDirection="column">
-      <Box marginBottom={1}>
-        <Text bold color="cyan">
-          Atlas
-        </Text>
-        <Text dimColor> - choose a session (↑↓ then Enter)</Text>
-      </Box>
-
       <Box>
         <Text color={index === 0 ? "green" : undefined} bold={index === 0}>
           {index === 0 ? "› " : "  "}+ start a new session

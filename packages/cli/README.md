@@ -13,8 +13,10 @@ polished product yet. See "What's not here yet" below.
 ## Requirements
 
 - Node.js >= 18.17
-- A running Atlas server (see the [root README](../../README.md#run)) -
-  the CLI is a pure client, it doesn't embed or launch Atlas itself.
+- A running Atlas server (see the [root README](../../README.md#run)).
+  The CLI is a pure client by default and doesn't embed Atlas itself -
+  but see `--atlas-binary` below if you'd rather it start the server
+  for you.
 
 ## Install
 
@@ -59,12 +61,18 @@ npm start -- --server http://127.0.0.1:8080
 | `--session <id>`         | -                              | Resume a specific session id, skipping the picker   |
 | `--new`                  | -                              | Start a fresh session, skipping the picker          |
 | `--list-sessions`        | -                              | Print known sessions for `--server`/`--workspace` and exit |
+| `--atlas-binary <path>`  | -, or the config file           | Path to the `atlas` server binary - auto-start it if `--server` is unreachable |
 
 A flag always wins over the config file, which always wins over the
 hardcoded default.
 
 Type a message and press Enter. Tool calls and results stream in live as
 the agent works; `/exit` or `/quit` (or Ctrl+C) quits.
+
+The CLI takes over the whole terminal (an alternate screen buffer, like
+`vim` or `less` - your normal scrollback is untouched and comes right
+back on exit) and shows two tabs at the top, **Chat** and **Sessions**;
+press `Tab` at any time to switch between them, including mid-turn.
 
 ### Config file
 
@@ -77,21 +85,48 @@ Written by hand for now (no `atlas config set` yet) at:
 ```json
 {
   "server": "http://192.168.1.50:8080",
-  "workspace": "myproject"
+  "workspace": "myproject",
+  "atlasBinary": "C:\\atlas\\atlas.exe"
 }
 ```
 
-Both fields are optional; either can be set independently. A malformed
+All fields are optional; each can be set independently. A malformed
 file is reported as a warning on startup and ignored (falls back to
 defaults) rather than crashing the CLI.
 
-### Session picker
+### Auto-starting the server
 
-Starting the CLI without `--session`/`--new` shows a picker (↑↓ then
-Enter) when there's at least one known session for the current
+Unlike `server`/`workspace`, `atlasBinary` (or `--atlas-binary`) has no
+hardcoded default - it's entirely opt-in. When it's set, the CLI checks
+`--server` on startup, and only if that check fails does it launch the
+binary itself (`atlas --port=<from --server> --bind=127.0.0.1`) and wait
+for it to come up - so one command starts both the server and the
+client instead of needing two terminal windows. If you're already
+running Atlas yourself, or point `--server` at a machine you don't
+control, the check succeeds and auto-start never kicks in.
+
+The server's own stdout/stderr are redirected to a log file next to the
+config file (`atlas-server.log` in the same directory as
+`config.json`) rather than printed to the terminal, since the CLI owns
+the screen for its own UI. If auto-start fails or times out (15s by
+default), the CLI prints a one-line warning pointing at that log file
+and continues anyway - you'll just see the usual "server unreachable"
+state until you sort out the server separately. The server the CLI
+started is stopped automatically when the CLI exits, including on
+Ctrl+C.
+
+### Sessions tab
+
+Starting the CLI without `--session`/`--new` opens on the **Sessions**
+tab (↑↓ then Enter to pick, or `Tab` to jump to Chat instead) when
+there's at least one known session for the current
 `--server`/`--workspace` - "start a new session" is always the first
-option. On first run, or after `--list-sessions` shows nothing, there's
-nothing to pick from yet, so it skips straight to a new session.
+row. On first run, or after `--list-sessions` shows nothing, there's
+nothing to pick from yet, so it opens straight on Chat with a fresh
+session. `--session <id>` and `--new` also skip straight to Chat.
+Picking a session (or starting a new one) from the Sessions tab jumps
+back to Chat automatically; nothing about an in-progress conversation
+is lost by switching tabs to browse sessions and back.
 
 This is a local, client-side index only (next to the config file, at
 `sessions.json` in the same directory) - it just remembers session ids
@@ -137,8 +172,10 @@ npm test            # vitest - AtlasClient's NDJSON parsing against a
                      # real node:http server (chunked lines, dropped
                      # connections), the config/session-registry file
                      # I/O against a temp dir (ATLAS_CLI_CONFIG_DIR),
-                     # SessionPicker's keyboard navigation, and an
-                     # end-to-end App render test
+                     # SessionPicker's keyboard navigation, an
+                     # end-to-end App render test, and launchServer()
+                     # supervising real spawned fixture processes
+                     # (server/fixtures/)
 npm run build        # emits dist/ for `npm start` / the `atlas` bin
 ```
 

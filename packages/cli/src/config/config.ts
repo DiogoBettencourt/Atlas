@@ -8,9 +8,22 @@ import { configDir, configFilePath } from "./paths.js";
 export interface AtlasConfig {
   server?: string;
   workspace?: string;
+  // Path to the atlas server binary (e.g. an absolute path to
+  // atlas.exe / atlas). When set, and only when the configured
+  // --server isn't already reachable, the CLI launches it itself
+  // instead of requiring a separate terminal window - see
+  // src/server/launch.ts. No hardcoded default: unlike server/
+  // workspace there's no sensible universal guess for where this
+  // binary lives, so leaving it unset simply means auto-start is
+  // never attempted (the previous, still-fully-supported behavior).
+  atlasBinary?: string;
 }
 
-const HARDCODED_DEFAULTS: Required<AtlasConfig> = {
+// Only server/workspace have a sensible universal default - see the
+// doc comment on AtlasConfig.atlasBinary for why that one doesn't.
+type CoreDefaults = Required<Pick<AtlasConfig, "server" | "workspace">>;
+
+const HARDCODED_DEFAULTS: CoreDefaults = {
   server: "http://127.0.0.1:8080",
   workspace: "default",
 };
@@ -30,6 +43,7 @@ export function loadConfig(): AtlasConfig {
     const config: AtlasConfig = {};
     if (typeof obj.server === "string") config.server = obj.server;
     if (typeof obj.workspace === "string") config.workspace = obj.workspace;
+    if (typeof obj.atlasBinary === "string") config.atlasBinary = obj.atlasBinary;
     return config;
   } catch (err) {
     process.stderr.write(
@@ -46,7 +60,7 @@ export function saveConfig(config: AtlasConfig): void {
   writeFileSync(configFilePath(), JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
-export function resolveDefaults(config: AtlasConfig): Required<AtlasConfig> {
+export function resolveDefaults(config: AtlasConfig): CoreDefaults {
   return {
     server: config.server ?? HARDCODED_DEFAULTS.server,
     workspace: config.workspace ?? HARDCODED_DEFAULTS.workspace,
