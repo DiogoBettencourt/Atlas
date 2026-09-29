@@ -144,15 +144,28 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
 
   return (
     <Box flexDirection="column">
-      <Box marginBottom={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={0} marginBottom={1} width={72}>
         <Text bold color="cyan">
-          Atlas
+          ATLAS
         </Text>
-        <Text dimColor>
-          {" "}
-          - {serverLabel} - session {sessionId}
-        </Text>
-        {serverOk === false && <Text color="red"> (server unreachable)</Text>}
+        <Text dimColor>Local AI workspace agent - command-line interface</Text>
+        <Box marginTop={1} flexDirection="column">
+          <Text>
+            <Text color={serverOk === false ? "red" : "green"}>{"\u25cf"}</Text>
+            <Text dimColor>
+              {" "}
+              {serverOk === false ? `Atlas server unreachable at ${serverLabel}` : `Connected to Atlas server at ${serverLabel}`}
+            </Text>
+          </Text>
+          <Text>
+            <Text color="green">{"\u25cf"}</Text>
+            <Text dimColor> Workspace: {workspace ?? "default"}</Text>
+          </Text>
+          <Text>
+            <Text color="green">{"\u25cf"}</Text>
+            <Text dimColor> Session: {sessionId}</Text>
+          </Text>
+        </Box>
       </Box>
 
       {history.map((turn, i) => (
@@ -189,11 +202,20 @@ export default function App({ client, sessionId, workspace, serverLabel, onTurnC
         </Box>
       )}
 
-      <Box>
+      <Box borderStyle="round" borderColor={busy ? "yellow" : "gray"} paddingX={1} width={72}>
         <Text color="green" bold>
-          you&gt;{" "}
+          {"> "}
         </Text>
-        <TextInput value={input} onChange={setInput} onSubmit={(v) => void submit(v)} showCursor={!busy} />
+        <TextInput
+          value={input}
+          onChange={setInput}
+          onSubmit={(v) => void submit(v)}
+          showCursor={!busy}
+          placeholder="Type a message, or /exit to quit"
+        />
+      </Box>
+      <Box marginTop={1}>
+        <Text dimColor>Ctrl+C exit {"\u00b7"} /exit or /quit to leave</Text>
       </Box>
     </Box>
   );
