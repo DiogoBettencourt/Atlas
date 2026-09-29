@@ -11,6 +11,9 @@ import React from "react";
 import { AtlasClient } from "./api/client.js";
 import { loadConfig, resolveDefaults } from "./config/config.js";
 import { sessionsFor } from "./config/sessions.js";
+import { launchServer, ServerLaunchError } from "./server/launch.js";
+import { configDir } from "./config/paths.js";
+import { join } from "node:path";
 import Root, { type TabId } from "./ui/Root.js";
 
 interface CliOptions {
@@ -19,9 +22,11 @@ interface CliOptions {
   session?: string;
   new?: boolean;
   listSessions?: boolean;
+  atlasBinary?: string;
 }
 
-const configDefaults = resolveDefaults(loadConfig());
+const rawConfig = loadConfig();
+const configDefaults = resolveDefaults(rawConfig);
 
 const program = new Command();
 program
@@ -32,6 +37,11 @@ program
   .option("--session <id>", "resume a specific session id, skipping the picker")
   .option("--new", "start a fresh session, skipping the picker")
   .option("--list-sessions", "print known sessions for --server/--workspace and exit")
+  .option(
+    "--atlas-binary <path>",
+    "path to the atlas server binary - launch it automatically when --server is unreachable",
+    rawConfig.atlasBinary
+  )
   .parse(process.argv);
 
 const options = program.opts<CliOptions>();
@@ -65,8 +75,40 @@ const EXIT_ALT_SCREEN = "\x1b[?1049l";
 const HIDE_CURSOR = "\x1b[?25l";
 const SHOW_CURSOR = "\x1b[?25h";
 
+// Set once launchServer() (below) succeeds, so the exit/SIGINT handlers
+// can stop the server the CLI itself started - never a server the user
+// was already running, since serverChild only exists on the auto-start
+// path.
+let serverChild: import("node:child_process").ChildProcess | undefined;
+
 function restoreTerminal(): void {
   process.stdout.write(SHOW_CURSOR + EXIT_ALT_SCREEN);
+  serverChild?.kill();
+}
+
+// Best-effort auto-start: only attempted when --atlas-binary is
+// configured AND the configured --server doesn't already answer a
+// health check (so a server the user is already running, or started
+// themselves, is always left alone). Failures here are reported but
+// never fatal - the CLI still renders normally afterward, same as if
+// auto-start weren't configured at all, and the existing "server
+// unreachable" state in App.tsx is what the user sees.
+async function maybeAutoStartServer(client: AtlasClient): Promise<void> {
+  if (!options.atlasBinary) return;
+  if (await client.health()) return;
+
+  try {
+    const { child } = await launchServer({
+      serverUrl: options.server,
+      binaryPath: options.atlasBinary,
+      logFilePath: join(configDir(), "atlas-server.log"),
+      checkHealth: (url) => new AtlasClient({ baseUrl: url }).health(),
+    });
+    serverChild = child;
+  } catch (err) {
+    const message = err instanceof ServerLaunchError ? err.message : err instanceof Error ? err.message : String(err);
+    process.stderr.write(`atlas: warning: couldn't auto-start the server (${message}) - continuing without it\n`);
+  }
 }
 
 async function main(): Promise<void> {
@@ -86,6 +128,8 @@ async function main(): Promise<void> {
 
   const { sessionId, tab } = resolveStart();
   const client = new AtlasClient({ baseUrl: options.server });
+
+  await maybeAutoStartServer(client);
 
   process.on("exit", restoreTerminal);
   process.on("SIGINT", () => {

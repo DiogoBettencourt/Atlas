@@ -30,6 +30,11 @@ describe("loadConfig / saveConfig", () => {
     expect(loadConfig()).toEqual({ server: "http://example.com:9000", workspace: "scratch" });
   });
 
+  it("round-trips atlasBinary", () => {
+    saveConfig({ atlasBinary: "/opt/atlas/atlas" });
+    expect(loadConfig()).toEqual({ atlasBinary: "/opt/atlas/atlas" });
+  });
+
   it("falls back to {} (with a stderr warning, not a crash) on a corrupt file", () => {
     writeFileSync(configFilePath(), "{ not valid json", "utf8");
     expect(loadConfig()).toEqual({});
@@ -38,6 +43,15 @@ describe("loadConfig / saveConfig", () => {
   it("ignores non-string fields rather than passing them through", () => {
     writeFileSync(configFilePath(), JSON.stringify({ server: 12345, workspace: "ok" }), "utf8");
     expect(loadConfig()).toEqual({ workspace: "ok" });
+  });
+});
+
+describe("resolveDefaults / atlasBinary", () => {
+  it("resolveDefaults never invents an atlasBinary - it's opt-in only, with no fallback", () => {
+    expect(resolveDefaults({ atlasBinary: "/opt/atlas/atlas" })).toEqual({
+      server: "http://127.0.0.1:8080",
+      workspace: "default",
+    });
   });
 });
 
