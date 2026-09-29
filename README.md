@@ -1,6 +1,8 @@
 # Atlas
 
-**This file is actively maintained.**
+**This file is actively maintained.** See also [`ROADMAP.md`](ROADMAP.md)
+for project goals/milestones and [`VERSIONING.md`](VERSIONING.md) for what
+counts as a major/minor/patch release.
 
 Local-first, privacy-focused C++20 AI workspace backend. Headless REST
 microservice that drives a local Ollama model through a ReAct (Reason +
