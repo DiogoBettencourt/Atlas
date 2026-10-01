@@ -1,18 +1,32 @@
 name: CLI CI
 
+# Deliberately NOT path-filtered at the workflow level (unlike the
+# previous version of this file), even though that means every push/PR
+# pays for an npm install+test cycle even on backend-only or docs-only
+# changes. The reason: a workflow that never TRIGGERS on a given PR
+# (because its `on.paths` didn't match) never creates a check run at
+# all, and GitHub's branch protection then shows that required check as
+# permanently "Expected" - stuck, not passing - for any PR that doesn't
+# happen to touch packages/cli/**. That's a much worse failure mode than
+# a wasted ~minute of CI time, so correctness of "required status
+# checks actually clear" wins over trimming CI minutes here. (Job-level
+# path filtering, which still creates a check run that just reports a
+# fast no-op "skipped" success, would avoid both problems - worth
+# revisiting if CI minutes become an actual cost at this project's
+# scale.)
 on:
   push:
-    branches: [main, master, dev]
-    paths:
-      - "packages/cli/**"
-      - ".github/workflows/cli-ci.yml"
+    branches: [master, dev]
   pull_request:
-    paths:
-      - "packages/cli/**"
-      - ".github/workflows/cli-ci.yml"
+  workflow_dispatch:
 
 jobs:
-  build-and-test:
+  cli-build-and-test:
+    # Named distinctly from ci.yml's "build-and-test" - both workflows
+    # used the same job id before, which made them hard to tell apart in
+    # GitHub's required-status-check picker (branch protection settings
+    # list checks by job name, not workflow name).
+    name: CLI build and test
     runs-on: ubuntu-latest
     defaults:
       run:
