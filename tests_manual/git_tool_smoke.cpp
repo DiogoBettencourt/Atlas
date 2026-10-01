@@ -32,23 +32,46 @@ bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
-// Runs a command via plain system() to build the fixture repo itself -
-// GitTool's own execute() is what's under test, so fixture setup
-// deliberately doesn't go through it.
-void sh(const std::string& cmd) {
-    int rc = std::system(cmd.c_str());
+// Runs `git <args>` via plain system() to build the fixture repo itself
+// - GitTool's own execute() is what's under test, so fixture setup
+// deliberately doesn't go through it. Cross-platform on purpose: the
+// caller's cwd (set once via fs::current_path(), never a shell `cd`)
+// decides which repo this runs against, so `args` only ever needs to be
+// plain ASCII git arguments - no path interpolation, no quoting that
+// would need to differ between POSIX sh and cmd.exe. A caller that needs
+// a value with a space in it (a commit message, a config value) wraps
+// it in double quotes itself - the one quoting convention both shells
+// agree on for simple content.
+void sh(const std::string& args) {
+    int rc = std::system(("git " + args).c_str());
     if (rc != 0) {
-        std::cerr << "fixture setup command failed (" << rc << "): " << cmd << "\n";
+        std::cerr << "fixture setup command failed (" << rc << "): git " << args << "\n";
         std::exit(1);
     }
+}
+
+// Same as sh(), but for a command that's *expected* to possibly fail -
+// creating a merge/rebase conflict on purpose, or aborting one that may
+// or may not exist. Its output isn't suppressed (no POSIX-only
+// `>/dev/null 2>&1` - there's no cross-platform equivalent worth the
+// trouble) - seeing git's own conflict message in the test log is useful
+// signal, not noise.
+void shAllowFail(const std::string& args) {
+    int rc = std::system(("git " + args).c_str());
+    (void)rc; // exit status intentionally unchecked: the caller expects this to possibly fail
+}
+
+void writeFile(const std::filesystem::path& path, const std::string& content) {
+    std::ofstream f(path, std::ios::trunc);
+    f << content;
 }
 
 } // namespace
 
 int main() {
     namespace fs = std::filesystem;
-    fs::path repo = "/tmp/atlas_git_tool_smoke_repo";
-    fs::path wrong_workspace = "/tmp/atlas_git_tool_smoke_not_the_repo";
+    fs::path repo = fs::temp_directory_path() / "atlas_git_tool_smoke_repo";
+    fs::path wrong_workspace = fs::temp_directory_path() / "atlas_git_tool_smoke_not_the_repo";
 
     std::error_code ec;
     fs::remove_all(repo, ec);
@@ -56,15 +79,21 @@ int main() {
     fs::create_directories(repo);
     fs::create_directories(wrong_workspace);
 
+    // Every git call below runs with this as cwd - set once, portably,
+    // via the filesystem API rather than a shell `cd` (whose quoting
+    // rules differ between POSIX sh and cmd.exe, and whose separator
+    // conventions don't both agree on `/tmp/...`-style forward slashes).
+    fs::current_path(repo);
+
     // A real repo, not just an empty directory - every action below
     // exercises actual git, not a chdir() failure that happens to return
     // a JSON object nobody checked the shape of.
-    sh("cd '" + repo.string() + "' && git init -q -b main "
-       "&& git config user.email test@example.com "
-       "&& git config user.name 'Atlas Test' "
-       "&& echo 'line one' > shared.txt "
-       "&& git add shared.txt "
-       "&& git commit -q -m 'initial commit'");
+    sh("init -q -b main");
+    sh("config user.email test@example.com");
+    sh("config user.name \"Atlas Test\"");
+    writeFile(repo / "shared.txt", "line one\n");
+    sh("add shared.txt");
+    sh("commit -q -m \"initial commit\"");
 
     atlas::tools::GitTool git(repo);
 
@@ -88,10 +117,7 @@ int main() {
     std::cout << checkout_result.dump(2) << "\n";
     check(checkout_result.value("exit_code", -1) == 0, "checkout_branch creates a new branch");
 
-    {
-        std::ofstream f(repo / "new_file.txt");
-        f << "written by the agent\n";
-    }
+    writeFile(repo / "new_file.txt", "written by the agent\n");
 
     std::cout << "\n== add ==\n";
     auto add_result = git.execute({{"action", "add"}}, repo.string());
@@ -116,7 +142,7 @@ int main() {
     // tool's control would, bypassing GitTool entirely via the raw
     // fixture helper, then confirm push still refuses regardless of how
     // we got onto main.
-    sh("cd '" + repo.string() + "' && git checkout -q main");
+    sh("checkout -q main");
     auto push_on_main = git.execute({{"action", "push"}}, repo.string());
     std::cout << push_on_main.dump(2) << "\n";
     check(push_on_main.contains("error"), "push refused while on main");
@@ -129,15 +155,15 @@ int main() {
     // conflict markers written into shared.txt - exactly the state the
     // old version of this tool had no way to detect or recover from.
     std::cout << "\n== setting up a real merge conflict ==\n";
-    sh("cd '" + repo.string() + "' && git checkout -q main "
-       "&& git checkout -q -b conflict-a "
-       "&& echo 'line one, changed on A' > shared.txt "
-       "&& git commit -q -am 'change on conflict-a' "
-       "&& git checkout -q main "
-       "&& git checkout -q -b conflict-b "
-       "&& echo 'line one, changed on B' > shared.txt "
-       "&& git commit -q -am 'change on conflict-b' "
-       "&& (git merge conflict-a > /dev/null 2>&1 || true)");
+    sh("checkout -q main");
+    sh("checkout -q -b conflict-a");
+    writeFile(repo / "shared.txt", "line one, changed on A\n");
+    sh("commit -q -am \"change on conflict-a\"");
+    sh("checkout -q main");
+    sh("checkout -q -b conflict-b");
+    writeFile(repo / "shared.txt", "line one, changed on B\n");
+    sh("commit -q -am \"change on conflict-b\"");
+    shAllowFail("merge conflict-a");
 
     auto status_mid_conflict = git.execute({{"action", "status"}}, repo.string());
     std::cout << "status while mid-conflict:\n" << status_mid_conflict.dump(2) << "\n";
@@ -171,7 +197,7 @@ int main() {
     }
 
     std::cout << "\n== abort_merge with nothing in progress is a clean no-op ==\n";
-    sh("cd '" + repo.string() + "' && git merge --abort");
+    sh("merge --abort");
     auto noop_abort = git.execute({{"action", "abort_merge"}}, repo.string());
     std::cout << noop_abort.dump(2) << "\n";
     check(!noop_abort.contains("error"), "abort_merge with nothing in progress doesn't error");
@@ -179,7 +205,7 @@ int main() {
 
     // Re-create the exact same conflict to test abort_merge actually
     // doing the recovery, not just the no-op path above.
-    sh("cd '" + repo.string() + "' && (git merge conflict-a > /dev/null 2>&1 || true)");
+    shAllowFail("merge conflict-a");
     auto status_mid_conflict_2 = git.execute({{"action", "status"}}, repo.string());
     check(contains(status_mid_conflict_2.value("output", ""), "shared.txt") ||
           status_mid_conflict_2.value("exit_code", -1) == 0,
@@ -209,8 +235,8 @@ int main() {
     // rebase-merge/rebase-apply instead of MERGE_HEAD), so the merge test
     // above doesn't actually cover it.
     std::cout << "\n== setting up a real rebase conflict ==\n";
-    sh("cd '" + repo.string() + "' && git checkout -q conflict-b "
-       "&& (git rebase conflict-a > /dev/null 2>&1 || true)");
+    sh("checkout -q conflict-b");
+    shAllowFail("rebase conflict-a");
 
     auto status_mid_rebase = git.execute({{"action", "status"}}, repo.string());
     std::cout << status_mid_rebase.dump(2) << "\n";
@@ -246,6 +272,9 @@ int main() {
     std::cout << "== GitHubPRTool: wrong workspace refused ==\n";
     std::cout << pr.execute({{"title", "test"}, {"head", "feature/atlas-test"}}, wrong_workspace.string()).dump(2) << "\n";
 
+    // Step out of `repo` before deleting it - on Windows a directory
+    // that's still a live process's cwd can't be removed.
+    fs::current_path(fs::temp_directory_path());
     fs::remove_all(repo, ec);
     fs::remove_all(wrong_workspace, ec);
 
