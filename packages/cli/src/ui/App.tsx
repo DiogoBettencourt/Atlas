@@ -55,6 +55,8 @@ function describeEvent(event: AgentEvent): string {
   switch (event.type) {
     case "iteration_start":
       return `→ iteration ${event.iteration}/${event.max_iterations}`;
+    case "thinking":
+      return `\u{1F4AD} ${event.content}`;
     case "assistant_thought":
       return event.content;
     case "tool_call":

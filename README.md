@@ -82,6 +82,7 @@ Response:
   "session_id": "any-string-you-choose",
   "reply": "...",
   "steps": [
+    {"type": "thinking", "content": "The user wants to know what this file does, so I should read it first..."},
     {"type": "assistant_thought", "content": "I'll check the file first."},
     {"type": "tool_call", "name": "read_file", "arguments": {"path": "hello.txt"}},
     {"type": "tool_result", "name": "read_file", "result": {"content": "...", "truncated": false}}
@@ -89,10 +90,13 @@ Response:
 }
 ```
 `steps` is the full trace of what the agent did to arrive at `reply` —
-every tool call it made and every result it got back, in order. This
-endpoint still blocks until the whole loop finishes; use `/chat/stream`
-below if you want to see steps arrive live instead of all at once at the
-end.
+every tool call it made and every result it got back, in order. `thinking`
+only appears for a reasoning-capable model (e.g. Qwen3) and carries its
+chain-of-thought, separate from `assistant_thought` (the model's own
+plain-text remark alongside a tool call, not its internal reasoning).
+This endpoint still blocks until the whole loop finishes; use
+`/chat/stream` below if you want to see steps arrive live instead of all
+at once at the end.
 
 ### `POST /chat/stream`
 Same request body as `/chat`. Instead of one JSON object, the response is
@@ -102,6 +106,7 @@ written to the connection as the agent produces it, ending in a `final` or
 
 ```
 {"type":"iteration_start","iteration":1,"max_iterations":20}
+{"type":"thinking","content":"The user wants to know what this file does, so I should read it first..."}
 {"type":"assistant_thought","content":"I'll check the file first."}
 {"type":"tool_call","name":"read_file","arguments":{"path":"hello.txt"}}
 {"type":"tool_result","name":"read_file","result":{"content":"...","truncated":false}}
