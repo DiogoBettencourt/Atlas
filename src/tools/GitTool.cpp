@@ -1,5 +1,6 @@
 #include "atlas/tools/GitTool.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <regex>
@@ -101,7 +102,8 @@ nlohmann::json GitTool::parametersSchema() const {
             {"action", {
                 {"type", "string"},
                 {"enum", nlohmann::json::array(
-                    {"status", "diff", "add", "commit", "checkout_branch", "push", "pull"})},
+                    {"status", "diff", "add", "commit", "checkout_branch", "push", "pull",
+                     "abort_merge"})},
                 {"description", "Which git operation to perform."}
             }},
             {"branch", {
@@ -131,6 +133,32 @@ std::string GitTool::currentBranch() const {
         branch.pop_back();
     }
     return branch;
+}
+
+std::string GitTool::inProgressOperation() const {
+    // `git rev-parse --git-path <name>` prints where that pseudo-ref file
+    // would live for the CURRENT repo/worktree, without requiring it to
+    // exist - it's the same resolution git itself uses, so this stays
+    // correct whether allowed_repo_root_ is an ordinary clone or a
+    // worktree (whose `.git` is a file, not a directory).
+    auto gitPath = [this](const std::string& relative) -> fs::path {
+        auto result = runGit({"rev-parse", "--git-path", relative});
+        if (result.value("exit_code", -1) != 0) return {};
+        std::string out = result.value("output", std::string{});
+        while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+        if (out.empty()) return {};
+        fs::path p(out);
+        return p.is_absolute() ? p : allowed_repo_root_ / p;
+    };
+
+    std::error_code ec;
+    if (fs::exists(gitPath("MERGE_HEAD"), ec)) return "merge";
+    // A rebase in progress is marked by one of these two directories
+    // depending on whether git picked the "merge" or "apply" backend for
+    // it - both are "a rebase is happening" as far as this tool cares.
+    if (fs::exists(gitPath("rebase-merge"), ec)) return "rebase";
+    if (fs::exists(gitPath("rebase-apply"), ec)) return "rebase";
+    return "";
 }
 
 #if defined(_WIN32)
@@ -308,6 +336,33 @@ nlohmann::json GitTool::execute(const nlohmann::json& arguments,
         }
 
         const std::string action = arguments["action"].get<std::string>();
+
+        // Guard the mutating/stateful actions against running while a
+        // merge or rebase is sitting unresolved - status/diff stay
+        // read-only and always allowed (useful for *seeing* the conflict),
+        // and abort_merge is the dedicated way out, handled below.
+        static const std::array<std::string, 5> kBlockedDuringConflict{
+            "add", "commit", "checkout_branch", "push", "pull"};
+        if (std::find(kBlockedDuringConflict.begin(), kBlockedDuringConflict.end(), action) !=
+            kBlockedDuringConflict.end()) {
+            std::string in_progress = inProgressOperation();
+            if (!in_progress.empty()) {
+                return nlohmann::json{{"error",
+                    "a " + in_progress + " is currently in progress and left unresolved - "
+                    "refusing to " + action + " to avoid baking conflict markers into a commit "
+                    "or compounding the problem. Call git with action=\"abort_merge\" to cleanly "
+                    "back out to the state before the " + in_progress + " started, or resolve it "
+                    "manually outside Atlas."}};
+            }
+        }
+
+        if (action == "abort_merge") {
+            std::string in_progress = inProgressOperation();
+            if (in_progress.empty()) {
+                return nlohmann::json{{"exit_code", 0}, {"output", "nothing to abort - no merge or rebase in progress"}};
+            }
+            return runGit({in_progress, "--abort"});
+        }
 
         if (action == "status") {
             return runGit({"status", "--short", "--branch"});

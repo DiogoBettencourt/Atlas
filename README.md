@@ -148,7 +148,7 @@ The agent has seven tools available on every turn:
 | `read_file`      | Read a workspace-relative file (truncated past 32KB)             |
 | `write_file`     | Create or fully overwrite a workspace-relative file               |
 | `edit_file`      | Exact, unique find-and-replace edit within an existing file       |
-| `git`            | Restricted git ops (`status`/`diff`/`add`/`commit`/`checkout_branch`/`push`/`pull`) — self-repo only |
+| `git`            | Restricted git ops (`status`/`diff`/`add`/`commit`/`checkout_branch`/`push`/`pull`/`abort_merge`) — self-repo only |
 | `github_pr`      | Opens a GitHub pull request from a pushed branch — self-repo only |
 
 All file tools are sandboxed to the active workspace root via
