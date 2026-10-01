@@ -1,4 +1,4 @@
-name: CLI CI
+name: CLI
 
 # Deliberately NOT path-filtered at the workflow level (unlike the
 # previous version of this file), even though that means every push/PR
@@ -22,11 +22,14 @@ on:
 
 jobs:
   cli-build-and-test:
-    # Named distinctly from ci.yml's "build-and-test" - both workflows
-    # used the same job id before, which made them hard to tell apart in
-    # GitHub's required-status-check picker (branch protection settings
-    # list checks by job name, not workflow name).
-    name: CLI build and test
+    # "Build" with no matrix suffix - stays distinct from ci.yml's
+    # matrix-suffixed "Build (ubuntu-latest)"/"Build (windows-latest)"
+    # and its unsuffixed "Gate" job. GitHub's required-status-check
+    # picker in branch protection lists checks by this display name
+    # alone (not by workflow), so anything sharing a name with another
+    # check elsewhere is impossible to tell apart there - that's the
+    # thing to preserve if this ever gets renamed again.
+    name: Build
     runs-on: ubuntu-latest
     defaults:
       run:

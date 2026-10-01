@@ -73,6 +73,26 @@ Beyond ordinary code review:
   cross-workspace data leak) were the kind that look fine on read-through
   and only show up when actually exercised.
 
+## Recovering from a merge or rebase conflict
+
+`pull` is always `--ff-only`, so `GitTool` itself can never leave the repo
+mid-merge on its own - but a conflict can still exist if a previous run
+was interrupted mid-merge/rebase some other way, or if you've been poking
+at the same checkout yourself (another reason to keep `--self-repo`
+dedicated - see above).
+
+If `status` shows unmerged paths (`UU <file>`), or a file has `<<<<<<<`
+conflict markers in it, `add`/`commit`/`checkout_branch`/`push`/`pull` all
+refuse outright rather than risk the agent staging and committing those
+markers as if they were resolved code. The way out is
+`{"action": "abort_merge"}` - it runs `git merge --abort` or
+`git rebase --abort` as appropriate (detected automatically) and returns
+the repo to the state before the merge/rebase started. It's a no-op (not
+an error) if nothing's actually in progress, so it's always safe for the
+agent to try. Atlas never calls this on its own - it only fires in
+response to an explicit `abort_merge` request, same as every other
+mutating action here.
+
 ## Known gap: unbounded session growth
 
 `Agent::chat` resends the entire session history on every iteration

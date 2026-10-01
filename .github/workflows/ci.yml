@@ -1,4 +1,4 @@
-name: CI
+name: Backend
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  backend-build-and-test:
+    name: Build
     strategy:
       fail-fast: false
       matrix:
@@ -32,20 +33,30 @@ jobs:
   # the matrix job above individually, and forgets about a leg silently
   # if the matrix ever changes (add an OS here, branch protection doesn't
   # know to require it until someone remembers to go update that setting
-  # too). This job exists purely so there's ONE stable check name
-  # ("CI gate") to mark as required instead - it depends on every matrix
-  # leg, so it can only succeed if all of them did, and picks up new
-  # matrix entries automatically since `needs: build-and-test` always
-  # means "the whole matrix."
-  ci-gate:
-    name: CI gate
+  # too). This job exists purely so there's ONE stable check name to mark
+  # as required instead - it depends on every matrix leg, so it can only
+  # succeed if all of them did, and picks up new matrix entries
+  # automatically since `needs: backend-build-and-test` always means "the
+  # whole matrix."
+  #
+  # Its display name ("Gate") stays distinct from the build job's matrix
+  # legs ("Build (ubuntu-latest)", "Build (windows-latest)") and from
+  # cli-ci.yml's "Build" job on purpose - GitHub's required-status-check
+  # picker in branch protection lists checks by this display name, not by
+  # workflow, so two checks sharing one name there are impossible to tell
+  # apart. The matrix suffix GitHub auto-appends here is what keeps the
+  # backend legs distinct from the CLI build; nothing here is named
+  # identically to anything else without that kind of built-in
+  # disambiguation.
+  backend-ci-gate:
+    name: Gate
     runs-on: ubuntu-latest
-    needs: build-and-test
+    needs: backend-build-and-test
     if: always()
     steps:
-      - name: Check build-and-test result
+      - name: Check backend-build-and-test result
         run: |
-          if [ "${{ needs.build-and-test.result }}" != "success" ]; then
-            echo "build-and-test did not succeed (${{ needs.build-and-test.result }})"
+          if [ "${{ needs.backend-build-and-test.result }}" != "success" ]; then
+            echo "backend-build-and-test did not succeed (${{ needs.backend-build-and-test.result }})"
             exit 1
           fi
