@@ -95,3 +95,16 @@ export function recordTurn(params: { id: string; server: string; workspace: stri
   sessions.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   writeSessions(sessions.slice(0, MAX_SESSIONS));
 }
+
+// Drops a session from this LOCAL picker registry only - it's the
+// caller's job to also delete it server-side (AtlasClient.deleteSession)
+// if that's the intent; this function on its own just forgets the
+// picker entry, the same "client-side index, not the source of truth"
+// contract the rest of this file already documents. A no-op (not an
+// error) if the id isn't in the registry at all.
+export function removeSession(id: string): void {
+  const sessions = loadSessions();
+  const next = sessions.filter((s) => s.id !== id);
+  if (next.length === sessions.length) return; // nothing to do
+  writeSessions(next);
+}

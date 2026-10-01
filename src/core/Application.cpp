@@ -50,8 +50,8 @@ Application::Application(int argc, char* argv[])
       symbol_indexer_(),
       llm_client_(config_["ollama_host"].get<std::string>(), config_["ollama_port"].get<int>()),
       agent_(llm_client_, tool_manager_, session_manager_, config_["model"].get<std::string>()),
-      api_server_(agent_, workspace_manager_, config_["bind_address"].get<std::string>(),
-                  config_["port"].get<int>()) {
+      api_server_(agent_, workspace_manager_, session_manager_,
+                  config_["bind_address"].get<std::string>(), config_["port"].get<int>()) {
     std::string self_repo = config_["self_repo"].get<std::string>();
     std::string github_repo = config_["github_repo"].get<std::string>();
     tool_manager_.registerDefaultTools(symbol_indexer_, self_repo, github_repo);

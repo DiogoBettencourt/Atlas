@@ -6,9 +6,11 @@
 namespace atlas::api {
 
 APIServer::APIServer(agent::Agent& agent, core::WorkspaceManager& workspace_manager,
+                     core::SessionManager& session_manager,
                      std::string bind_address, int port)
     : agent_(agent),
       workspace_manager_(workspace_manager),
+      session_manager_(session_manager),
       bind_address_(std::move(bind_address)),
       port_(port) {
     registerRoutes();
@@ -70,6 +72,30 @@ void APIServer::registerRoutes() {
         }
     });
 
+    // Path-param routes (regex-matched by cpp-httplib; req.matches[1] is
+    // the captured session id) rather than the body-based style /chat and
+    // /chat/stream use - these two are plain reads/deletes keyed entirely
+    // by the id in the URL, with nothing else to pass, so there's no body
+    // to justify POST-with-JSON for. Both just forward to SessionManager
+    // methods (getHistory/resetSession) that already existed for Agent's
+    // own internal use - this is the first thing to expose them over HTTP.
+    server_.Get(R"(/sessions/([^/]+)/history)", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = req.matches[1];
+        res.set_content(
+            nlohmann::json{{"session_id", session_id},
+                           {"messages", session_manager_.getHistory(session_id)}}
+                .dump(),
+            "application/json");
+    });
+
+    server_.Delete(R"(/sessions/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = req.matches[1];
+        session_manager_.resetSession(session_id);
+        res.set_content(
+            nlohmann::json{{"session_id", session_id}, {"deleted", true}}.dump(),
+            "application/json");
+    });
+
     server_.Post("/chat/stream", [this](const httplib::Request& req, httplib::Response& res) {
         auto body = nlohmann::json::parse(req.body, nullptr, false);
         if (body.is_discarded() || !body.contains("message") || !body.contains("session_id")) {
@@ -120,7 +146,8 @@ void APIServer::registerRoutes() {
 
 void APIServer::run() {
     std::cout << "Atlas API server listening on http://" << bind_address_ << ":" << port_
-              << " (POST /chat, POST /chat/stream, GET /health)" << std::endl;
+              << " (POST /chat, POST /chat/stream, GET /health, "
+                 "GET /sessions/:id/history, DELETE /sessions/:id)" << std::endl;
     if (!server_.listen(bind_address_, port_)) {
         throw std::runtime_error("APIServer: failed to bind " + bind_address_ + ":" +
                                  std::to_string(port_));

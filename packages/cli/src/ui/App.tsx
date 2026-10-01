@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp } from "ink";
 import TextInput from "ink-text-input";
 import type { JSX } from "react";
-import { AtlasClient, type AgentEvent } from "../api/client.js";
+import { AtlasClient, type AgentEvent, type RawSessionMessage } from "../api/client.js";
 
 export interface AppProps {
   client: AtlasClient;
@@ -33,6 +33,38 @@ export interface AppProps {
 interface Turn {
   role: "user" | "assistant";
   content: string;
+}
+
+// Projects a session's complete raw history (every tool-call turn
+// included - see RawSessionMessage's doc comment) down to the same
+// user/assistant transcript the UI builds live, turn by turn, in
+// submit() below. Kept in sync with that by construction: submit() only
+// ever pushes a user Turn for what was typed and an assistant Turn for
+// the FINAL reply - intermediate tool_call/tool_result/thinking steps
+// are ephemeral liveEvents, never persisted into `history` - so
+// reconstructing from storage has to apply the same filter, or a
+// restored transcript would show raw tool-call noise a freshly-typed
+// one never did. Exported (rather than kept private like describeEvent)
+// specifically so this filter is unit-testable without rendering a
+// component or standing up a server.
+export function turnsFromHistory(messages: RawSessionMessage[]): Turn[] {
+  const turns: Turn[] = [];
+  for (const m of messages) {
+    if (m.role === "user" && typeof m.content === "string") {
+      turns.push({ role: "user", content: m.content });
+    } else if (
+      m.role === "assistant" &&
+      (!m.tool_calls || m.tool_calls.length === 0) &&
+      typeof m.content === "string" &&
+      m.content.length > 0
+    ) {
+      turns.push({ role: "assistant", content: m.content });
+    }
+    // Everything else - "tool" messages, and "assistant" messages that
+    // carry tool_calls - was only ever a live-only step, not part of
+    // the transcript a user actually read turn by turn.
+  }
+  return turns;
 }
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -95,6 +127,22 @@ export default function App({ client, sessionId, workspace, serverLabel, width =
       mounted.current = false;
     };
   }, [client]);
+
+  // Restores this session's prior transcript on mount. Needed because
+  // Root unmounts/remounts App on every Tab press between the Chat and
+  // Sessions views (and when SessionPicker hands back a different
+  // sessionId) - `history` above is plain component state with nothing
+  // backing it, so without this, switching to the Sessions tab and back
+  // (or resuming an older session) silently wiped the transcript on
+  // screen even though the real conversation was always safely
+  // persisted server-side the whole time. getHistory() never throws
+  // (see its doc comment in api/client.ts), so a fresh/never-seen
+  // sessionId just resolves to an empty list here, same as today.
+  useEffect(() => {
+    void client.getHistory(sessionId).then((messages) => {
+      if (mounted.current) setHistory(turnsFromHistory(messages));
+    });
+  }, [client, sessionId]);
 
   async function submit(message: string): Promise<void> {
     if (busy) return; // one turn at a time - see README's "what's not here yet"

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadSessions, recordTurn, sessionsFor } from "./sessions.js";
+import { loadSessions, recordTurn, removeSession, sessionsFor } from "./sessions.js";
 
 let dir: string;
 
@@ -74,6 +74,29 @@ describe("sessionsFor", () => {
 
 describe("loadSessions", () => {
   it("returns [] when no registry file exists yet", () => {
+    expect(loadSessions()).toEqual([]);
+  });
+});
+
+describe("removeSession", () => {
+  it("drops the matching entry and leaves the rest untouched", () => {
+    recordTurn({ id: "s1", server: "http://a", workspace: "default", message: "keep me" });
+    recordTurn({ id: "s2", server: "http://a", workspace: "default", message: "delete me" });
+
+    removeSession("s2");
+
+    const sessions = loadSessions();
+    expect(sessions.map((s) => s.id)).toEqual(["s1"]);
+  });
+
+  it("is a no-op when the id isn't in the registry", () => {
+    recordTurn({ id: "s1", server: "http://a", workspace: "default", message: "keep me" });
+    removeSession("does-not-exist");
+    expect(loadSessions().map((s) => s.id)).toEqual(["s1"]);
+  });
+
+  it("is a no-op against an empty registry", () => {
+    expect(() => removeSession("anything")).not.toThrow();
     expect(loadSessions()).toEqual([]);
   });
 });

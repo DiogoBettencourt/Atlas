@@ -1,6 +1,7 @@
 #pragma once
 
 #include "atlas/agent/Agent.hpp"
+#include "atlas/core/SessionManager.hpp"
 #include "atlas/core/WorkspaceManager.hpp"
 #include <httplib.h>
 #include <string>
@@ -14,6 +15,7 @@ namespace atlas::api {
 class APIServer {
 public:
     APIServer(agent::Agent& agent, core::WorkspaceManager& workspace_manager,
+              core::SessionManager& session_manager,
               std::string bind_address = "127.0.0.1", int port = 8080);
 
     APIServer(const APIServer&) = delete;
@@ -31,6 +33,7 @@ private:
 
     agent::Agent& agent_;
     core::WorkspaceManager& workspace_manager_;
+    core::SessionManager& session_manager_;
     std::string bind_address_;
     int port_;
     httplib::Server server_;

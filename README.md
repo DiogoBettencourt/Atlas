@@ -139,6 +139,35 @@ while (-not $reader.EndOfStream) {
 }
 ```
 
+### `GET /sessions/:id/history`
+Returns a session's complete, uncompacted message history exactly as
+persisted by `SessionManager` — the same data `/chat`'s `reply` was
+assembled from, not a derived/simplified view:
+```json
+{
+  "session_id": "s1",
+  "messages": [
+    {"role": "user", "content": "read hello.txt"},
+    {"role": "assistant", "content": "", "tool_calls": [...]},
+    {"role": "tool", "name": "read_file", "content": "..."},
+    {"role": "assistant", "content": "Done — the file says hello."}
+  ]
+}
+```
+Always returns `200` with an empty `messages` array for a session id that
+doesn't exist yet, rather than a `404` — the same "doesn't exist until
+its first message" semantics `SessionManager::getHistory` already has
+internally.
+
+### `DELETE /sessions/:id`
+Permanently deletes a session's history and any compaction summary, both
+in memory and on disk (`SessionManager::resetSession`):
+```json
+{"session_id": "s1", "deleted": true}
+```
+Always returns `200` regardless of whether the id existed — deleting
+something that was never there isn't an error.
+
 ## Built-in tools
 
 Chat history is persisted per `session_id` as JSON under

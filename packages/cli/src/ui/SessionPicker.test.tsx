@@ -16,7 +16,7 @@ const SESSIONS: SessionRecord[] = [
 describe("SessionPicker", () => {
   it("renders 'start a new session' plus every given session's label", async () => {
     const { lastFrame, unmount } = render(
-      React.createElement(SessionPicker, { sessions: SESSIONS, onSelect: () => {} })
+      React.createElement(SessionPicker, { sessions: SESSIONS, onSelect: () => {}, onDelete: () => {} })
     );
     await wait(20);
     const frame = lastFrame() ?? "";
@@ -34,6 +34,7 @@ describe("SessionPicker", () => {
         onSelect: (id) => {
           selected = id;
         },
+        onDelete: () => {},
       })
     );
     await wait(20);
@@ -51,6 +52,7 @@ describe("SessionPicker", () => {
         onSelect: (id) => {
           selected = id;
         },
+        onDelete: () => {},
       })
     );
     await wait(20);
@@ -72,6 +74,7 @@ describe("SessionPicker", () => {
         onSelect: (id) => {
           selected = id;
         },
+        onDelete: () => {},
       })
     );
     await wait(20);
@@ -84,6 +87,89 @@ describe("SessionPicker", () => {
     stdin.write("\r");
     await wait(20);
     expect(selected).toBeUndefined();
+    unmount();
+  });
+
+  it("asks for confirmation on 'd' instead of deleting immediately", async () => {
+    let deleted: string | "not-called" = "not-called";
+    const { stdin, lastFrame, unmount } = render(
+      React.createElement(SessionPicker, {
+        sessions: SESSIONS,
+        onSelect: () => {},
+        onDelete: (id) => {
+          deleted = id;
+        },
+      })
+    );
+    await wait(20);
+    stdin.write("\u001B[B"); // down arrow -> row 1 (s1)
+    await wait(10);
+    stdin.write("d");
+    await wait(20);
+    expect(lastFrame() ?? "").toContain("Delete");
+    expect(deleted).toBe("not-called"); // not yet - still waiting on y/n
+    unmount();
+  });
+
+  it("deletes on 'd' then 'y'", async () => {
+    let deleted: string | "not-called" = "not-called";
+    const { stdin, unmount } = render(
+      React.createElement(SessionPicker, {
+        sessions: SESSIONS,
+        onSelect: () => {},
+        onDelete: (id) => {
+          deleted = id;
+        },
+      })
+    );
+    await wait(20);
+    stdin.write("\u001B[B"); // down arrow -> row 1 (s1)
+    await wait(10);
+    stdin.write("d");
+    await wait(10);
+    stdin.write("y");
+    await wait(20);
+    expect(deleted).toBe("s1");
+    unmount();
+  });
+
+  it("cancels on 'd' then 'n', leaving the session alone", async () => {
+    let deleted: string | "not-called" = "not-called";
+    const { stdin, unmount } = render(
+      React.createElement(SessionPicker, {
+        sessions: SESSIONS,
+        onSelect: () => {},
+        onDelete: (id) => {
+          deleted = id;
+        },
+      })
+    );
+    await wait(20);
+    stdin.write("\u001B[B"); // down arrow -> row 1 (s1)
+    await wait(10);
+    stdin.write("d");
+    await wait(10);
+    stdin.write("n");
+    await wait(20);
+    expect(deleted).toBe("not-called");
+    unmount();
+  });
+
+  it("'d' on the 'start a new session' row does nothing", async () => {
+    let deleted: string | "not-called" = "not-called";
+    const { stdin, unmount } = render(
+      React.createElement(SessionPicker, {
+        sessions: SESSIONS,
+        onSelect: () => {},
+        onDelete: (id) => {
+          deleted = id;
+        },
+      })
+    );
+    await wait(20);
+    stdin.write("d"); // still on row 0
+    await wait(20);
+    expect(deleted).toBe("not-called");
     unmount();
   });
 });
