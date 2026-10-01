@@ -5,7 +5,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { AtlasApiError, AtlasClient, type AgentEvent } from "./client.js";
+import { AtlasApiError, AtlasClient, AtlasConnectError, type AgentEvent } from "./client.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -324,6 +324,103 @@ describe("AtlasClient.sendMessage", () => {
         ).rejects.toThrow();
         expect(streamAttempts).toBe(1);
         expect(chatHits).toBe(0);
+      }
+    );
+  });
+});
+
+describe("AtlasClient.getHistory", () => {
+  it("GETs /sessions/:id/history and returns its messages array", async () => {
+    await withServer(
+      (req, res) => {
+        expect(req.method).toBe("GET");
+        expect(req.url).toBe("/sessions/s1/history");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: "s1", messages: [{ role: "user", content: "hi" }] }));
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(client.getHistory("s1")).resolves.toEqual([{ role: "user", content: "hi" }]);
+      }
+    );
+  });
+
+  it("URL-encodes the session id", async () => {
+    await withServer(
+      (req, res) => {
+        expect(req.url).toBe("/sessions/has%20space/history");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: "has space", messages: [] }));
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await client.getHistory("has space");
+      }
+    );
+  });
+
+  it("resolves to [] rather than throwing when the server is unreachable", async () => {
+    const client = new AtlasClient({ baseUrl: "http://127.0.0.1:1" });
+    await expect(client.getHistory("s1")).resolves.toEqual([]);
+  });
+
+  it("resolves to [] rather than throwing on a non-2xx response", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "boom" }));
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(client.getHistory("s1")).resolves.toEqual([]);
+      }
+    );
+  });
+
+  it("resolves to [] rather than throwing on a malformed (non-JSON) body", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+        res.end('{"type":"final"}\n');
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(client.getHistory("s1")).resolves.toEqual([]);
+      }
+    );
+  });
+});
+
+describe("AtlasClient.deleteSession", () => {
+  it("DELETEs /sessions/:id", async () => {
+    await withServer(
+      (req, res) => {
+        expect(req.method).toBe("DELETE");
+        expect(req.url).toBe("/sessions/s1");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: "s1", deleted: true }));
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(client.deleteSession("s1")).resolves.toBeUndefined();
+      }
+    );
+  });
+
+  it("throws AtlasConnectError when the server is unreachable", async () => {
+    const client = new AtlasClient({ baseUrl: "http://127.0.0.1:1" });
+    await expect(client.deleteSession("s1")).rejects.toBeInstanceOf(AtlasConnectError);
+  });
+
+  it("throws AtlasApiError on a non-2xx response", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "boom" }));
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(client.deleteSession("s1")).rejects.toBeInstanceOf(AtlasApiError);
       }
     );
   });

@@ -29,6 +29,21 @@ export interface ChatResponse {
   steps: AgentEvent[];
 }
 
+// A single raw message exactly as SessionManager/Agent persist it -
+// {"role":"user"|"assistant"|"tool", "content":..., "tool_calls"?:...,
+// "name"?:...}. Deliberately not narrowed further than this: GET
+// /sessions/:id/history returns the complete, uncompacted history
+// (including intermediate tool-call turns), not a simplified view, so a
+// caller that wants to render it as a plain user/assistant transcript
+// (see ui/App.tsx's turnsFromHistory) has to do its own filtering rather
+// than relying on this type to have done it already.
+export interface RawSessionMessage {
+  role: string;
+  content?: string;
+  tool_calls?: unknown[];
+  name?: string;
+}
+
 export class AtlasApiError extends Error {
   constructor(message: string, readonly cause?: unknown) {
     super(message);
@@ -84,6 +99,48 @@ export class AtlasClient {
     // Strip a trailing slash so `${baseUrl}/health` never ends up
     // double-slashed regardless of how the caller passed --server.
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
+  }
+
+  // GET /sessions/:id/history - the complete, uncompacted history for a
+  // session, exactly as persisted (see RawSessionMessage). Never throws:
+  // a connect failure or a non-2xx response both just resolve to an
+  // empty array, the same as a session that doesn't exist yet - callers
+  // restoring a transcript on mount (ui/App.tsx) want "nothing to show"
+  // either way, not a crash over a best-effort convenience fetch.
+  async getHistory(sessionId: string): Promise<RawSessionMessage[]> {
+    try {
+      const res = await fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}/history`);
+      if (!res.ok) return [];
+      const body = (await res.json()) as { messages?: RawSessionMessage[] };
+      return body.messages ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  // DELETE /sessions/:id - permanently removes a session's history and
+  // compaction summary, both server-side (SessionManager::resetSession)
+  // and, by the caller, from the local picker registry (see
+  // config/sessions.ts's removeSession). Throws AtlasConnectError if the
+  // request can't even reach the server - unlike getHistory(), a failed
+  // delete is NOT something a caller should silently swallow, since the
+  // caller (ui/SessionPicker.tsx) needs to know whether it's actually
+  // safe to drop the entry from its own local list.
+  async deleteSession(sessionId: string): Promise<void> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+      });
+    } catch (err) {
+      throw new AtlasConnectError(
+        `couldn't reach Atlas server at ${this.baseUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        err
+      );
+    }
+    if (!res.ok) {
+      throw new AtlasApiError(`Atlas server returned HTTP ${res.status} deleting session ${sessionId}`);
+    }
   }
 
   // Liveness check against GET /health. Never throws - a request that

@@ -17,9 +17,20 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Root only calls client.health() (via the App it mounts for the Chat
-// tab) - a real AtlasClient isn't needed for shell-level behavior.
-const fakeClient = { health: async () => true } as unknown as AtlasClient;
+// Root only calls client.health() and client.getHistory() (via the App
+// it mounts for the Chat tab), and client.deleteSession() (via the
+// delete flow on the Sessions tab) - a real AtlasClient isn't needed for
+// shell-level behavior.
+function makeFakeClient(overrides: Partial<AtlasClient> = {}): AtlasClient {
+  return {
+    health: async () => true,
+    getHistory: async () => [],
+    deleteSession: async () => {},
+    ...overrides,
+  } as unknown as AtlasClient;
+}
+
+const fakeClient = makeFakeClient();
 
 let dir: string;
 
@@ -117,6 +128,68 @@ describe("Root", () => {
     const frame = lastFrame() ?? "";
     expect(frame).toContain("ATLAS"); // switched back to Chat
     expect(frame).toContain("Session: s1");
+
+    unmount();
+  });
+
+  it("pressing d then y on a session deletes it from the list and calls the server", async () => {
+    recordTurn({ id: "s1", server: "http://a", workspace: "default", message: "fix the crash" });
+    const deletedIds: string[] = [];
+    const client = makeFakeClient({
+      deleteSession: async (id: string) => {
+        deletedIds.push(id);
+      },
+    });
+    const { stdin, lastFrame, unmount } = render(
+      React.createElement(Root, {
+        client,
+        initialSessionId: "current",
+        initialTab: "sessions",
+        server: "http://a",
+        workspace: "default",
+      })
+    );
+    await wait(30);
+    expect(lastFrame() ?? "").toContain("fix the crash");
+
+    stdin.write("[B"); // down arrow -> row 1 (s1)
+    await wait(20);
+    stdin.write("d");
+    await wait(20);
+    expect(lastFrame() ?? "").toContain("Delete");
+    stdin.write("y");
+    await wait(30);
+
+    expect(deletedIds).toEqual(["s1"]);
+    expect(lastFrame() ?? "").not.toContain("fix the crash");
+
+    unmount();
+  });
+
+  it("deleting the session currently open in Chat moves Chat to a fresh session id", async () => {
+    recordTurn({ id: "s1", server: "http://a", workspace: "default", message: "fix the crash" });
+    const { stdin, lastFrame, unmount } = render(
+      React.createElement(Root, {
+        client: fakeClient,
+        initialSessionId: "s1",
+        initialTab: "sessions",
+        server: "http://a",
+        workspace: "default",
+      })
+    );
+    await wait(30);
+
+    stdin.write("[B"); // down arrow -> row 1 (s1, the active Chat session)
+    await wait(20);
+    stdin.write("d");
+    await wait(20);
+    stdin.write("y");
+    await wait(30);
+
+    stdin.write("	"); // switch to Chat
+    await wait(30);
+
+    expect(lastFrame() ?? "").not.toContain("Session: s1");
 
     unmount();
   });

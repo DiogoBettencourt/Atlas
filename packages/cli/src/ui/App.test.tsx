@@ -9,8 +9,8 @@ import type { AddressInfo } from "node:net";
 import { render } from "ink-testing-library";
 import React from "react";
 import { describe, expect, it } from "vitest";
-import { AtlasClient } from "../api/client.js";
-import App from "./App.js";
+import { AtlasClient, type RawSessionMessage } from "../api/client.js";
+import App, { turnsFromHistory } from "./App.js";
 
 async function startNdjsonServer(lines: object[]): Promise<{ baseUrl: string; server: Server }> {
   const server = createServer((_req, res) => {
@@ -70,5 +70,45 @@ describe("App", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("turnsFromHistory", () => {
+  it("keeps user messages and tool-call-free assistant messages, in order", () => {
+    const raw: RawSessionMessage[] = [
+      { role: "user", content: "read hello.txt" },
+      { role: "assistant", content: "the file says hi" },
+      { role: "user", content: "now read goodbye.txt" },
+      { role: "assistant", content: "it says bye" },
+    ];
+    expect(turnsFromHistory(raw)).toEqual([
+      { role: "user", content: "read hello.txt" },
+      { role: "assistant", content: "the file says hi" },
+      { role: "user", content: "now read goodbye.txt" },
+      { role: "assistant", content: "it says bye" },
+    ]);
+  });
+
+  it("drops intermediate tool-call turns - the assistant message that triggered them and the tool result itself", () => {
+    const raw: RawSessionMessage[] = [
+      { role: "user", content: "read hello.txt" },
+      { role: "assistant", content: "I'll check the file first.", tool_calls: [{ function: { name: "read_file" } }] },
+      { role: "tool", name: "read_file", content: '{"content":"hi"}' },
+      { role: "assistant", content: "the file says hi" },
+    ];
+    expect(turnsFromHistory(raw)).toEqual([
+      { role: "user", content: "read hello.txt" },
+      { role: "assistant", content: "the file says hi" },
+    ]);
+  });
+
+  it("returns an empty list for an empty or all-intermediate history", () => {
+    expect(turnsFromHistory([])).toEqual([]);
+    expect(
+      turnsFromHistory([
+        { role: "assistant", content: "", tool_calls: [{ function: { name: "read_file" } }] },
+        { role: "tool", name: "read_file", content: "..." },
+      ])
+    ).toEqual([]);
   });
 });
