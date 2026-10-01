@@ -314,6 +314,21 @@ std::string Agent::chat(const std::string& message,
 
         session_manager_.appendMessage(session_id, assistant_message);
 
+        // Reasoning-capable models (Qwen3, deepseek-r1, etc.) have Ollama
+        // return their chain-of-thought separately as `message.thinking`,
+        // distinct from `message.content` - this is the actual token
+        // generation behind the latency a thinking model already pays
+        // (see docs/specs and ROADMAP.md's model-management notes), but
+        // until now nothing downstream of LLMClient ever read it, so it
+        // was silently dropped the moment this function returned. Emit it
+        // (when present) right after each LLM call, regardless of
+        // whether this turn ends in a tool call or a final reply - both
+        // paths below return/continue without ever looking at it again.
+        std::string thinking = assistant_message.value("thinking", std::string{});
+        if (!thinking.empty()) {
+            emit({{"type", "thinking"}, {"content", thinking}});
+        }
+
         nlohmann::json tool_calls = extractToolCalls(assistant_message);
         if (tool_calls.empty()) {
             std::string reply = assistant_message.value("content", std::string{});

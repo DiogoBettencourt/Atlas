@@ -10,6 +10,7 @@ export interface AtlasClientOptions {
 
 export type AgentEvent =
   | { type: "iteration_start"; iteration: number; max_iterations: number }
+  | { type: "thinking"; content: string }
   | { type: "assistant_thought"; content: string }
   | { type: "tool_call"; name: string; arguments: unknown }
   | { type: "tool_result"; name: string; result: unknown }
