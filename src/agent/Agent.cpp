@@ -81,11 +81,11 @@ nlohmann::json toSyntheticToolCall(const nlohmann::json& parsed) {
 
 } // namespace
 
-Agent::Agent(LLMClient& llm_client,
+Agent::Agent(LLMBackend& llm_backend,
              tools::ToolManager& tool_manager,
              core::SessionManager& session_manager,
              std::string model_name)
-    : llm_client_(llm_client),
+    : llm_backend_(llm_backend),
       tool_manager_(tool_manager),
       session_manager_(session_manager),
       model_name_(std::move(model_name)) {}
@@ -268,7 +268,7 @@ std::string Agent::chat(const std::string& message,
 
                 try {
                     nlohmann::json summarization_request = buildCompactionRequest(running_summary, chunk);
-                    nlohmann::json summary_reply = llm_client_.chat(model_name_, summarization_request);
+                    nlohmann::json summary_reply = llm_backend_.chat(model_name_, summarization_request);
                     running_summary = summary_reply.value("content", running_summary);
 
                     core::SessionSummary progress_checkpoint;
@@ -305,7 +305,7 @@ std::string Agent::chat(const std::string& message,
 
         nlohmann::json assistant_message;
         try {
-            assistant_message = llm_client_.chat(model_name_, history, tool_manager_.schemasJson());
+            assistant_message = llm_backend_.chat(model_name_, history, tool_manager_.schemasJson());
         } catch (const std::exception& e) {
             std::string error_msg = std::string("Agent error: ") + e.what();
             emit({{"type", "error"}, {"message", error_msg}});
@@ -319,7 +319,7 @@ std::string Agent::chat(const std::string& message,
         // distinct from `message.content` - this is the actual token
         // generation behind the latency a thinking model already pays
         // (see docs/specs and ROADMAP.md's model-management notes), but
-        // until now nothing downstream of LLMClient ever read it, so it
+        // until now nothing downstream of the LLM backend ever read it, so it
         // was silently dropped the moment this function returned. Emit it
         // (when present) right after each LLM call, regardless of
         // whether this turn ends in a tool call or a final reply - both

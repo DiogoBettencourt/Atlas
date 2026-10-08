@@ -5,7 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include "atlas/agent/Agent.hpp"
-#include "atlas/agent/LLMClient.hpp"
+#include "atlas/agent/LLMBackend.hpp"
 #include "atlas/api/APIServer.hpp"
 #include "atlas/core/SessionManager.hpp"
 #include "atlas/core/SymbolIndexer.hpp"
@@ -43,6 +43,11 @@ private:
     // constructor arguments in the initializer list).
     static nlohmann::json buildConfig(int argc, char* argv[]);
 
+    // Constructs the LLMBackend selected by config["backend"] (--backend=).
+    // Currently only "ollama"; throws std::invalid_argument for anything
+    // else so a typo fails at startup instead of on the first chat.
+    static std::unique_ptr<agent::LLMBackend> makeBackend(const nlohmann::json& config);
+
     void setupSignalHandling();
 
     asio::io_context io_context_;
@@ -55,7 +60,7 @@ private:
     SessionManager session_manager_;
     SymbolIndexer symbol_indexer_;
 
-    agent::LLMClient llm_client_;
+    std::unique_ptr<agent::LLMBackend> llm_backend_;
     agent::Agent agent_;
     api::APIServer api_server_;
 };

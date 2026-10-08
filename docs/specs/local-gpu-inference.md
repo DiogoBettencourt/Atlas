@@ -5,8 +5,9 @@ RDNA4) but the sizing advice generalizes to any 12-24GB AMD card.
 
 ## Why this needs its own doc
 
-Atlas itself doesn't talk to the GPU at all - `LLMClient` just speaks HTTP
-to Ollama's `/api/chat` (see `src/agent/LLMClient.cpp`). All of the GPU
+Atlas itself doesn't talk to the GPU at all - `OllamaBackend` (an `LLMBackend`
+implementation) just speaks HTTP to Ollama's `/api/chat` (see
+`src/agent/OllamaBackend.cpp`). All of the GPU
 setup and model-fit tradeoffs below live entirely on the Ollama side of
 that boundary. This doc exists so that boundary is understood, and so a
 15-minute ROCm rabbit hole doesn't get mistaken for an Atlas bug.
@@ -72,9 +73,9 @@ On a 16GB card:
   --ollama-port=11434
 ```
 
-`LLMClient` sets a 300-second read timeout specifically because local
+`OllamaBackend` sets a 300-second read timeout specifically because local
 inference (especially anything spilling out of VRAM onto CPU) can be
-slow - if you see `LLMClient: Ollama returned HTTP ...` timeouts on a
+slow - if you see `OllamaBackend: Ollama returned HTTP ...` timeouts on a
 GPU-accelerated model that should easily run in time, that's a sign the
 model didn't actually load onto the GPU (check `ollama ps` for the
 `PROCESSOR` column - it should say `100% GPU`, not a CPU/GPU split).

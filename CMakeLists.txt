@@ -69,7 +69,7 @@ set(ATLAS_SOURCES
     src/core/SymbolIndexer.cpp
     src/storage/FileStorageManager.cpp
     src/agent/Agent.cpp
-    src/agent/LLMClient.cpp
+    src/agent/OllamaBackend.cpp
     src/api/APIServer.cpp
     src/tools/ToolManager.cpp
     src/tools/ReadFileTool.cpp
@@ -140,3 +140,4 @@ atlas_add_smoke_test(agent_trim_history_smoke)
 atlas_add_smoke_test(agent_compaction_smoke)
 atlas_add_smoke_test(session_manager_summary_smoke)
 atlas_add_smoke_test(agent_compaction_chunking_smoke)
+atlas_add_smoke_test(agent_fake_backend_smoke)

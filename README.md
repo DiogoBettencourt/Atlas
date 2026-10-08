@@ -49,13 +49,17 @@ This produces the `atlas` executable in `build/`.
   --model=qwen2.5-coder:14b \
   --port=8080 \
   --bind=127.0.0.1 \
+  --backend=ollama \
   --data-dir=./atlas_data/storage \
   --workspaces-dir=./atlas_data/workspaces \
   --ollama-host=127.0.0.1 \
   --ollama-port=11434
 ```
 
-All flags are optional and default to the values shown above. On startup
+All flags are optional and default to the values shown above. `--backend`
+selects the inference backend; `ollama` is currently the only one (the
+`LLMBackend` interface exists so others can be added without touching the
+agent loop). On startup
 Atlas creates a `default` workspace under `--workspaces-dir` and indexes it
 for `search_symbol`.
 
@@ -257,7 +261,7 @@ Atlas/
 │   ├── core/             # Application, WorkspaceManager, SessionManager, SymbolIndexer
 │   ├── storage/          # StorageManager interface + FileStorageManager
 │   ├── tools/            # Tool interface, ToolManager, built-in tools
-│   ├── agent/            # LLMClient (Ollama HTTP client), Agent (ReAct loop)
+│   ├── agent/            # LLMBackend interface, OllamaBackend, Agent (ReAct loop)
 │   └── api/              # APIServer (cpp-httplib REST endpoint)
 ├── src/                  # implementations, same subfolders as above
 └── packages/              # client applications, built separately from the
