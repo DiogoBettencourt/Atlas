@@ -15,6 +15,7 @@ import { launchServer, ServerLaunchError } from "./server/launch.js";
 import { configDir } from "./config/paths.js";
 import { join } from "node:path";
 import Root, { type TabId } from "./ui/Root.js";
+import { VERSION } from "./version.js";
 
 interface CliOptions {
   server: string;
@@ -32,6 +33,7 @@ const program = new Command();
 program
   .name("atlas")
   .description("Terminal client for the Atlas agent - a streaming REPL over its REST API.")
+  .version(VERSION, "-v, --version", "print the AtlasCLI version and exit")
   .option("-s, --server <url>", "Atlas API server base URL", configDefaults.server)
   .option("-w, --workspace <name>", "workspace name on the server", configDefaults.workspace)
   .option("--session <id>", "resume a specific session id, skipping the picker")

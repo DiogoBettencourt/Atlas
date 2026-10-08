@@ -31,39 +31,39 @@ inconsistent release stream harder to reason about.
 
 ## What actually gets versioned
 
-Right now there's a mismatch worth knowing about rather than discovering
-by surprise:
+The whole project shares **one version**, and it is the GitHub release tag
+(`vX.Y.Z`). That number lives in exactly two files, and they are bumped
+together:
 
-- **GitHub releases** (`v0.3.0` … `v0.6.0` today) version the project /
-  monorepo as a whole - a release can (and so far always has) bundled
-  changes to the backend, AtlasCLI, or both.
-- **`CMakeLists.txt`**'s `project(Atlas VERSION ...)` is still `0.1.0` -
-  it has not been bumped alongside any GitHub release.
-- **`packages/cli/package.json`**'s `"version"` is also still `0.1.0` -
-  same gap; the npm-published package version has never moved past its
-  initial publish.
-- Neither the `atlas` binary nor the `atlas` CLI command currently expose
-  a `--version` flag at all, so there's no way to ask either one at
-  runtime what it actually is.
+- **`CMakeLists.txt`**'s `project(Atlas VERSION X.Y.Z ...)` - the backend.
+  It is compiled into the binary, so `atlas --version` prints it and the
+  startup banner shows it. There is no second hand-maintained string.
+- **`packages/cli/package.json`**'s `"version"` (and the matching two
+  entries at the top of `package-lock.json`) - AtlasCLI. `atlas --version`
+  on the CLI reads it at runtime.
 
-None of this blocks a release today (GitHub's tag is the source of truth
-in practice), but it means "check the version" doesn't currently work the
-way someone would expect from either artifact. Worth a follow-up to: bump
-both files to track the GitHub release version going forward (or decide
-they should version independently and say so explicitly), and add a real
-`--version` flag to both the backend and the CLI.
+A test in `packages/cli/src/version.test.ts` fails CI if the two ever
+disagree, so skew can't ship by accident.
+
+What is *not* automatic: publishing to npm. A GitHub release always
+carries the new version in both files, but the npm package is only
+re-published when someone decides AtlasCLI changes are worth shipping
+there (v0.6.0 through v0.8.0 were not). When it is published, it goes out
+under the same number as the release it came from, never an independent
+one.
 
 ## Practical flow for cutting a release
 
 1. Land the PR(s) for the release into `dev`.
-2. Fast-forward `master` to `dev`.
+2. Bump the version in `CMakeLists.txt` and `packages/cli/package.json`
+   (+ `package-lock.json`) to `X.Y.Z` in a final commit on `dev`, then
+   fast-forward `master` to `dev`.
 3. Tag and publish a GitHub release against `master`, named `vX.Y.Z`,
    with release notes in the existing format: one-line summary, an
    `## Added`/`## Fixed` section per change linking its PR, a carried-
    forward `## Known limitations` section, and a `Full diff` compare
    link to the previous tag.
 4. If the change touched AtlasCLI in a way users installing from npm
-   would want, separately bump `packages/cli/package.json` and publish
-   to npm - this is not currently automatic or guaranteed to happen
-   every GitHub release (see v0.6.0, which shipped a GitHub release
-   without a matching npm publish).
+   would want, publish `packages/cli` to npm (its version was already
+   bumped in step 2) - this is not automatic and doesn't have to happen
+   for every GitHub release.
