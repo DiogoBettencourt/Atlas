@@ -2,7 +2,7 @@
 // sends the LLM to (re)compute a session's compaction summary when its
 // history's tail grows past the configured bound. Purely checks prompt
 // shape/content, since actually exercising compaction end-to-end needs a
-// live LLMClient (see chat()'s implementation in Agent.cpp instead).
+// live LLMBackend (see chat()'s implementation in Agent.cpp instead).
 #include "atlas/agent/Agent.hpp"
 
 #include <iostream>
@@ -27,7 +27,7 @@ bool contains(const std::string& haystack, const std::string& needle) {
 int main() {
     // -----------------------------------------------------------------
     // Shape: always exactly one plain "user" message, ready to hand
-    // straight to LLMClient::chat with no tools.
+    // straight to LLMBackend::chat with no tools.
     // -----------------------------------------------------------------
     {
         json to_summarize = json::array({

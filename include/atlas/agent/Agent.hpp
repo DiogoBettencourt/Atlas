@@ -1,6 +1,6 @@
 #pragma once
 
-#include "atlas/agent/LLMClient.hpp"
+#include "atlas/agent/LLMBackend.hpp"
 #include "atlas/core/SessionManager.hpp"
 #include "atlas/tools/ToolManager.hpp"
 #include <cstddef>
@@ -26,7 +26,7 @@ public:
     // safe for the callback to write directly to a socket/console.
     using EventCallback = std::function<void(const nlohmann::json&)>;
 
-    Agent(LLMClient& llm_client,
+    Agent(LLMBackend& llm_backend,
           tools::ToolManager& tool_manager,
           core::SessionManager& session_manager,
           std::string model_name);
@@ -110,14 +110,14 @@ public:
     // empty string if there isn't one yet) is threaded into the prompt so
     // repeated compactions accumulate what earlier ones already
     // established instead of each starting over and losing it. Returns
-    // the `messages` array ready to hand to LLMClient::chat with default
+    // the `messages` array ready to hand to LLMBackend::chat with default
     // (empty) tools - this is a plain summarization call, not a
     // tool-using turn. `messages_to_summarize` is expected to already be
     // a bounded-size chunk (see computeCompactionChunks) - this function
     // itself doesn't limit how much it's handed, since bounding that is
     // chat()'s job, not the prompt-building step's. Public and static,
     // like extractToolCalls/trimHistory, so the prompt shape can be
-    // unit-tested without a live LLMClient - see
+    // unit-tested without a live LLMBackend - see
     // tests_manual/agent_compaction_smoke.cpp.
     [[nodiscard]] static nlohmann::json buildCompactionRequest(const std::string& previous_summary,
                                                                  const nlohmann::json& messages_to_summarize);
@@ -150,7 +150,7 @@ public:
         std::size_t total_messages_to_summarize, std::size_t chunk_size);
 
 private:
-    LLMClient& llm_client_;
+    LLMBackend& llm_backend_;
     tools::ToolManager& tool_manager_;
     core::SessionManager& session_manager_;
     std::string model_name_;
