@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(Atlas VERSION 0.1.0 LANGUAGES CXX)
+project(Atlas VERSION 0.8.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -88,6 +88,10 @@ target_include_directories(atlas_core PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+# Single source of truth for the version string: the project() version above.
+# Used by `atlas --version` and the startup banner.
+target_compile_definitions(atlas_core PUBLIC ATLAS_VERSION="${PROJECT_VERSION}")
+
 target_link_libraries(atlas_core PUBLIC
     nlohmann_json::nlohmann_json
     asio_standalone
@@ -115,6 +119,10 @@ add_executable(atlas src/main.cpp)
 target_link_libraries(atlas PRIVATE atlas_core)
 
 enable_testing()
+
+add_test(NAME atlas_version_flag COMMAND atlas --version)
+set_tests_properties(atlas_version_flag PROPERTIES
+    PASS_REGULAR_EXPRESSION "Atlas [0-9]+\\.[0-9]+\\.[0-9]+")
 
 # Manual smoke-test executables under tests_manual/ (see that directory's
 # existing convention). Wired up defensively with EXISTS checks rather than

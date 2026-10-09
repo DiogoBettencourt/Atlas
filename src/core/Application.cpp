@@ -87,7 +87,7 @@ Application::Application(int argc, char* argv[])
 
     setupSignalHandling();
 
-    std::cout << "Atlas v0.1.0 initialized" << std::endl
+    std::cout << "Atlas v" << ATLAS_VERSION << " initialized" << std::endl
               << "  model:          " << config_["model"].get<std::string>() << std::endl
               << "  backend:        " << llm_backend_->name();
     if (llm_backend_->name() == "ollama") {
