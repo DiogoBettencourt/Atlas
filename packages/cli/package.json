@@ -1,6 +1,6 @@
 {
   "name": "@diogobettencourt/atlas-cli",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Terminal client for the Atlas agent - a thin, streaming REPL over Atlas's /chat/stream REST API.",
   "repository": {
     "type": "git",
