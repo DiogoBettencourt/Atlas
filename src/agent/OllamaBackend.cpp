@@ -1,13 +1,13 @@
-#include "atlas/agent/LLMClient.hpp"
+#include "atlas/agent/OllamaBackend.hpp"
 
 #include <httplib.h>
 #include <stdexcept>
 
 namespace atlas::agent {
 
-LLMClient::LLMClient(std::string host, int port) : host_(std::move(host)), port_(port) {}
+OllamaBackend::OllamaBackend(std::string host, int port) : host_(std::move(host)), port_(port) {}
 
-nlohmann::json LLMClient::chat(const std::string& model,
+nlohmann::json OllamaBackend::chat(const std::string& model,
                                 const nlohmann::json& messages,
                                 const nlohmann::json& tools) {
     httplib::Client client(host_, port_);
@@ -27,17 +27,17 @@ nlohmann::json LLMClient::chat(const std::string& model,
 
     if (!response) {
         throw std::runtime_error(
-            "LLMClient: failed to reach Ollama at " + host_ + ":" + std::to_string(port_) +
+            "OllamaBackend: failed to reach Ollama at " + host_ + ":" + std::to_string(port_) +
             " - is `ollama serve` running?");
     }
     if (response->status != 200) {
-        throw std::runtime_error("LLMClient: Ollama returned HTTP " +
+        throw std::runtime_error("OllamaBackend: Ollama returned HTTP " +
                                   std::to_string(response->status) + ": " + response->body);
     }
 
     nlohmann::json parsed = nlohmann::json::parse(response->body, nullptr, false);
     if (parsed.is_discarded() || !parsed.contains("message")) {
-        throw std::runtime_error("LLMClient: malformed response from Ollama: " + response->body);
+        throw std::runtime_error("OllamaBackend: malformed response from Ollama: " + response->body);
     }
 
     return parsed["message"];

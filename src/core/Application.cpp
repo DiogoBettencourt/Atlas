@@ -1,7 +1,10 @@
 #include "atlas/core/Application.hpp"
 
+#include "atlas/agent/OllamaBackend.hpp"
+
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <thread>
 
 namespace atlas::core {
@@ -30,6 +33,7 @@ nlohmann::json Application::buildConfig(int argc, char* argv[]) {
     config["bind_address"] = argOr(argc, argv, "bind", "127.0.0.1");
     config["data_dir"] = argOr(argc, argv, "data-dir", "./atlas_data/storage");
     config["workspaces_dir"] = argOr(argc, argv, "workspaces-dir", "./atlas_data/workspaces");
+    config["backend"] = argOr(argc, argv, "backend", "ollama");
     config["ollama_host"] = argOr(argc, argv, "ollama-host", "127.0.0.1");
     config["ollama_port"] = std::stoi(argOr(argc, argv, "ollama-port", "11434"));
     // Self-improvement: empty by default (feature disabled). Set both to
@@ -37,6 +41,15 @@ nlohmann::json Application::buildConfig(int argc, char* argv[]) {
     config["self_repo"] = argOr(argc, argv, "self-repo", "");
     config["github_repo"] = argOr(argc, argv, "github-repo", "");
     return config;
+}
+
+std::unique_ptr<agent::LLMBackend> Application::makeBackend(const nlohmann::json& config) {
+    const std::string backend = config["backend"].get<std::string>();
+    if (backend == "ollama") {
+        return std::make_unique<agent::OllamaBackend>(config["ollama_host"].get<std::string>(),
+                                                      config["ollama_port"].get<int>());
+    }
+    throw std::invalid_argument("unknown --backend '" + backend + "' (supported: ollama)");
 }
 
 Application::Application(int argc, char* argv[])
@@ -48,8 +61,8 @@ Application::Application(int argc, char* argv[])
       tool_manager_(),
       session_manager_(storage_manager_),
       symbol_indexer_(),
-      llm_client_(config_["ollama_host"].get<std::string>(), config_["ollama_port"].get<int>()),
-      agent_(llm_client_, tool_manager_, session_manager_, config_["model"].get<std::string>()),
+      llm_backend_(makeBackend(config_)),
+      agent_(*llm_backend_, tool_manager_, session_manager_, config_["model"].get<std::string>()),
       api_server_(agent_, workspace_manager_, session_manager_,
                   config_["bind_address"].get<std::string>(), config_["port"].get<int>()) {
     std::string self_repo = config_["self_repo"].get<std::string>();
@@ -76,8 +89,12 @@ Application::Application(int argc, char* argv[])
 
     std::cout << "Atlas v" << ATLAS_VERSION << " initialized" << std::endl
               << "  model:          " << config_["model"].get<std::string>() << std::endl
-              << "  ollama:         " << config_["ollama_host"].get<std::string>() << ":"
-              << config_["ollama_port"].get<int>() << std::endl
+              << "  backend:        " << llm_backend_->name();
+    if (llm_backend_->name() == "ollama") {
+        std::cout << " (" << config_["ollama_host"].get<std::string>() << ":"
+                  << config_["ollama_port"].get<int>() << ")";
+    }
+    std::cout << std::endl
               << "  data dir:       " << config_["data_dir"].get<std::string>() << std::endl
               << "  workspaces dir: " << config_["workspaces_dir"].get<std::string>() << std::endl
               << "  tools:          " << tool_manager_.toolCount() << " registered" << std::endl;
