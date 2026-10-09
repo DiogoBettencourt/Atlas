@@ -73,6 +73,59 @@ describe("App", () => {
   });
 });
 
+describe("App history loading", () => {
+  it("does not wipe a message sent before the history fetch returns", async () => {
+    // /history answers slowly (and with an older conversation) while the
+    // chat stream answers immediately, so the submit lands first.
+    const server = createServer((req, res) => {
+      if (req.url?.endsWith("/history")) {
+        setTimeout(() => {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              session_id: "test-session",
+              messages: [{ role: "user", content: "an older question" }],
+            })
+          );
+        }, 250);
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+      res.write(JSON.stringify({ type: "final", reply: "the file says hi" }) + "\n");
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+
+    try {
+      const client = new AtlasClient({ baseUrl: `http://127.0.0.1:${port}` });
+      const { stdin, lastFrame, unmount } = render(
+        React.createElement(App, {
+          client,
+          sessionId: "test-session",
+          workspace: "default",
+          serverLabel: "test",
+        })
+      );
+
+      await wait(50);
+      stdin.write("read hello.txt");
+      await wait(20);
+      stdin.write("\r");
+
+      // Wait well past the delayed /history response.
+      await wait(500);
+      const frame = lastFrame() ?? "";
+      expect(frame).toContain("you> read hello.txt");
+      expect(frame).toContain("atlas> the file says hi");
+
+      unmount();
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("turnsFromHistory", () => {
   it("keeps user messages and tool-call-free assistant messages, in order", () => {
     const raw: RawSessionMessage[] = [
