@@ -140,7 +140,11 @@ export default function App({ client, sessionId, workspace, serverLabel, width =
   // sessionId just resolves to an empty list here, same as today.
   useEffect(() => {
     void client.getHistory(sessionId).then((messages) => {
-      if (mounted.current) setHistory(turnsFromHistory(messages));
+      if (!mounted.current) return;
+      // Only fill in an empty transcript. If the user already sent a
+      // message before this fetch came back, `h` has their live turn in
+      // it and blindly replacing it would wipe what they just typed.
+      setHistory((h) => (h.length > 0 ? h : turnsFromHistory(messages)));
     });
   }, [client, sessionId]);
 
