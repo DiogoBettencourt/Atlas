@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { randomUUID } from "node:crypto";
 import { Box, Text, useInput } from "ink";
 import type { JSX } from "react";
-import type { AtlasClient } from "../api/client.js";
+import type { AtlasClient } from "@atlas/client";
 import { recordTurn, removeSession, sessionsFor, type SessionRecord } from "../config/sessions.js";
 import App from "./App.js";
 import SessionPicker from "./SessionPicker.js";

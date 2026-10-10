@@ -374,6 +374,8 @@ unrelated to CMake.
   thinking and tool calls, plus a sessions sidebar. Build it
   (`cd packages/ui && npm ci && npm run build`), start Atlas from the repo
   root, and open `http://127.0.0.1:8080/ui/`. Tracked in #55.
+- **[`@atlas/client`](packages/client/README.md)** - the typed API client both
+  of the above share (not published; consumed as source).
 
 ## Notes / known limitations
 

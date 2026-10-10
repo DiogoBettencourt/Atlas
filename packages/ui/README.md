@@ -40,10 +40,9 @@ so no proxy is needed.
 
 ## How it fits together
 
-- `@atlas/client` is AtlasCLI's `AtlasClient` (`packages/cli/src/api/client.ts`),
+- `@atlas/client` is the shared `AtlasClient` in [`packages/client`](../client/README.md),
   imported by source through a Vite alias, so the CLI and the UI share one
-  implementation of the wire format. It is plain `fetch` code. Turning it into a
-  published package is tracked in #19.
+  implementation of the wire format. It is plain `fetch` code.
 - `src/chatState.ts` holds the pure logic: how each `/chat/stream` event folds
   into a turn, and how a saved session's history becomes a transcript again
   (tool calls included).

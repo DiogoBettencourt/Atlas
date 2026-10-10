@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp } from "ink";
 import TextInput from "ink-text-input";
 import type { JSX } from "react";
-import { AtlasClient, type AgentEvent, type RawSessionMessage } from "../api/client.js";
+import { AtlasClient, type AgentEvent, type RawSessionMessage } from "@atlas/client";
 
 export interface AppProps {
   client: AtlasClient;
@@ -136,7 +136,7 @@ export default function App({ client, sessionId, workspace, serverLabel, width =
   // (or resuming an older session) silently wiped the transcript on
   // screen even though the real conversation was always safely
   // persisted server-side the whole time. getHistory() never throws
-  // (see its doc comment in api/client.ts), so a fresh/never-seen
+  // (see its doc comment in packages/client), so a fresh/never-seen
   // sessionId just resolves to an empty list here, same as today.
   useEffect(() => {
     void client.getHistory(sessionId).then((messages) => {
@@ -170,7 +170,7 @@ export default function App({ client, sessionId, workspace, serverLabel, width =
       // sendMessage() (rather than chatStream() directly) retries a
       // dropped /chat/stream connection with backoff, and falls back to
       // the non-streaming /chat if streaming still can't connect - see
-      // its doc comment in api/client.ts for exactly which failures that
+      // its doc comment in packages/client for exactly which failures that
       // covers and why (it's narrower than "any dropped connection", on
       // purpose - see issue #14/#15 discussion in the PR that added it).
       const reply = await client.sendMessage(

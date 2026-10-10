@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import { render } from "ink-testing-library";
 import React from "react";
 import { describe, expect, it } from "vitest";
-import { AtlasClient, type RawSessionMessage } from "../api/client.js";
+import { AtlasClient, type RawSessionMessage } from "@atlas/client";
 import App, { turnsFromHistory } from "./App.js";
 
 async function startNdjsonServer(lines: object[]): Promise<{ baseUrl: string; server: Server }> {
