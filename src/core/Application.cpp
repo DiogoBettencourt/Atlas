@@ -1,7 +1,9 @@
 #include "atlas/core/Application.hpp"
 
 #include "atlas/agent/OllamaBackend.hpp"
+#include "atlas/agent/OpenAICompatBackend.hpp"
 
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -24,6 +26,23 @@ std::string argOr(int argc, char* argv[], const std::string& key, const std::str
     return fallback;
 }
 
+// Reads an environment variable, treating unset and empty the same.
+std::string envOr(const char* name, const std::string& fallback) {
+#ifdef _WIN32
+    char* value = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&value, &length, name) == 0 && value != nullptr) {
+        std::string result(value);
+        std::free(value);
+        return result.empty() ? fallback : result;
+    }
+    return fallback;
+#else
+    const char* value = std::getenv(name);
+    return (value != nullptr && *value != '\0') ? std::string(value) : fallback;
+#endif
+}
+
 } // namespace
 
 nlohmann::json Application::buildConfig(int argc, char* argv[]) {
@@ -36,6 +55,12 @@ nlohmann::json Application::buildConfig(int argc, char* argv[]) {
     config["backend"] = argOr(argc, argv, "backend", "ollama");
     config["ollama_host"] = argOr(argc, argv, "ollama-host", "127.0.0.1");
     config["ollama_port"] = std::stoi(argOr(argc, argv, "ollama-port", "11434"));
+    // Only used by --backend=openai. llama-server defaults to port 8080,
+    // which is Atlas's own default, so we expect it on 8081 (--port=8081).
+    config["api_base"] = argOr(argc, argv, "api-base", "http://127.0.0.1:8081");
+    // Prefer the environment variable: a --api-key=... argument is visible
+    // in the process list.
+    config["api_key"] = argOr(argc, argv, "api-key", envOr("ATLAS_API_KEY", ""));
     // Self-improvement: empty by default (feature disabled). Set both to
     // let the agent open PRs against its own repository - see README.
     config["self_repo"] = argOr(argc, argv, "self-repo", "");
@@ -49,7 +74,11 @@ std::unique_ptr<agent::LLMBackend> Application::makeBackend(const nlohmann::json
         return std::make_unique<agent::OllamaBackend>(config["ollama_host"].get<std::string>(),
                                                       config["ollama_port"].get<int>());
     }
-    throw std::invalid_argument("unknown --backend '" + backend + "' (supported: ollama)");
+    if (backend == "openai") {
+        return std::make_unique<agent::OpenAICompatBackend>(config["api_base"].get<std::string>(),
+                                                            config["api_key"].get<std::string>());
+    }
+    throw std::invalid_argument("unknown --backend '" + backend + "' (supported: ollama, openai)");
 }
 
 Application::Application(int argc, char* argv[])
@@ -93,6 +122,9 @@ Application::Application(int argc, char* argv[])
     if (llm_backend_->name() == "ollama") {
         std::cout << " (" << config_["ollama_host"].get<std::string>() << ":"
                   << config_["ollama_port"].get<int>() << ")";
+    } else if (llm_backend_->name() == "openai") {
+        std::cout << " (" << config_["api_base"].get<std::string>()
+                  << (config_["api_key"].get<std::string>().empty() ? "" : ", api key set") << ")";
     }
     std::cout << std::endl
               << "  data dir:       " << config_["data_dir"].get<std::string>() << std::endl

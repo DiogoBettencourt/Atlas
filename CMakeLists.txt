@@ -70,6 +70,7 @@ set(ATLAS_SOURCES
     src/storage/FileStorageManager.cpp
     src/agent/Agent.cpp
     src/agent/OllamaBackend.cpp
+    src/agent/OpenAICompatBackend.cpp
     src/api/APIServer.cpp
     src/tools/ToolManager.cpp
     src/tools/ReadFileTool.cpp
@@ -149,3 +150,4 @@ atlas_add_smoke_test(agent_compaction_smoke)
 atlas_add_smoke_test(session_manager_summary_smoke)
 atlas_add_smoke_test(agent_compaction_chunking_smoke)
 atlas_add_smoke_test(agent_fake_backend_smoke)
+atlas_add_smoke_test(openai_backend_smoke)

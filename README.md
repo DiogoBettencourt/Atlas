@@ -57,9 +57,28 @@ This produces the `atlas` executable in `build/`.
 ```
 
 All flags are optional and default to the values shown above. `--backend`
-selects the inference backend; `ollama` is currently the only one (the
-`LLMBackend` interface exists so others can be added without touching the
-agent loop). On startup
+selects the inference backend: `ollama` (default) or `openai` (see below).
+The `LLMBackend` interface exists so more can be added without touching the
+agent loop.
+
+### Using an OpenAI-compatible server (llama.cpp's `llama-server`, LM Studio, vLLM)
+
+`--backend=openai` talks to any server that speaks the OpenAI-style
+`/v1/chat/completions` API. This only names the request format - nothing is
+sent to OpenAI; the server runs on your own machine.
+
+```bash
+llama-server -m model.gguf --port 8081 -ngl 99 --jinja   # 8081: Atlas itself uses 8080
+./atlas --backend=openai --api-base=http://127.0.0.1:8081 --model=any-label
+```
+
+- `--api-base` defaults to `http://127.0.0.1:8081`; a trailing `/v1` is fine.
+- `--model` is sent as the model name; a single-model llama-server ignores it.
+- If the server requires a key, set the `ATLAS_API_KEY` environment variable
+  (or `--api-key=...`, which is visible in the process list).
+- Tool calling needs `--jinja` on llama-server and a tool-aware chat template.
+- `scripts/bench_backends.py` compares this against Ollama; see
+  `docs/specs/backend-benchmark.md`. On startup
 Atlas creates a `default` workspace under `--workspaces-dir` and indexes it
 for `search_symbol`.
 
