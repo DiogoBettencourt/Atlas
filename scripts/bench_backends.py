@@ -286,6 +286,8 @@ def parse_args(argv=None):
     p.add_argument("--ollama-model", help="Ollama model tag, e.g. qwen3:14b (omit to skip Ollama)")
     p.add_argument("--llama-url", help="OpenAI-compatible server base URL, e.g. http://127.0.0.1:8081 (omit to skip)")
     p.add_argument("--llama-model", default="model", help="model name to send (llama-server ignores it; default: model)")
+    p.add_argument("--llama-label", default="openai-compat (llama-server)",
+                   help="name for this server's rows in the table, e.g. 'llama-server ROCm' (default: %(default)s)")
     p.add_argument("--api-key", default="", help="bearer token for the OpenAI-compatible server, if it needs one")
     p.add_argument("--runs", type=int, default=3, help="timed runs per prompt (default 3)")
     p.add_argument("--max-tokens", type=int, default=256, help="generation cap per run (default 256)")
@@ -347,7 +349,7 @@ def main(argv=None) -> int:
                 k: environment["llama_props"].get(k) for k in ("build_info", "model_path") if k in environment["llama_props"]
             }
         try:
-            rows += benchmark("openai-compat (llama-server)", run_openai, args)
+            rows += benchmark(args.llama_label, run_openai, args)
         except (urllib.error.URLError, OSError) as exc:
             print(f"error: could not benchmark {args.llama_url}: {exc}", file=sys.stderr)
 
