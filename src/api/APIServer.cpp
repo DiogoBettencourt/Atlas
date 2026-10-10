@@ -30,8 +30,10 @@ void APIServer::registerRoutes() {
         res.status = 200;
     });
 
-    server_.Get("/health", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(nlohmann::json{{"status", "ok"}}.dump(), "application/json");
+    server_.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
+        nlohmann::json body = info_;
+        body["status"] = "ok";
+        res.set_content(body.dump(), "application/json");
     });
 
     server_.Get("/sessions", [this](const httplib::Request&, httplib::Response& res) {
@@ -154,6 +156,10 @@ void APIServer::registerRoutes() {
                 return true;
             });
     });
+}
+
+void APIServer::setInfo(nlohmann::json info) {
+    info_ = std::move(info);
 }
 
 bool APIServer::serveUi(const std::string& directory) {

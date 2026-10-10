@@ -115,6 +115,10 @@ Application::Application(int argc, char* argv[])
         symbol_indexer_.indexDirectory(self_root);
     }
 
+    api_server_.setInfo({{"version", ATLAS_VERSION},
+                         {"backend", llm_backend_->name()},
+                         {"model", config_["model"].get<std::string>()}});
+
     // Serve the built AtlasUI at /ui if it's there. Missing is normal (the
     // UI is an optional, separately built package), so only say so quietly.
     const std::string ui_dir = config_["ui_dir"].get<std::string>();
