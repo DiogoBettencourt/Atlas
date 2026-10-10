@@ -161,29 +161,30 @@ and may have already run tools with real side effects (a git commit, a
 file write). Resending the same message past that point would risk
 duplicating that work rather than safely retrying it, so a mid-stream
 drop is surfaced as an error immediately instead - no retry, no
-fallback. See the doc comment on `sendMessage()` in `src/api/client.ts`
+fallback. See the doc comment on `sendMessage()` in `packages/client/src/index.ts`
 for the full reasoning.
 
 ## Development
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # vitest - AtlasClient's NDJSON parsing against a
-                     # real node:http server (chunked lines, dropped
-                     # connections), the config/session-registry file
+npm test            # vitest - the config/session-registry file
                      # I/O against a temp dir (ATLAS_CLI_CONFIG_DIR),
                      # SessionPicker's keyboard navigation, an
                      # end-to-end App render test, and launchServer()
                      # supervising real spawned fixture processes
                      # (server/fixtures/)
-npm run build        # emits dist/ for `npm start` / the `atlas` bin
+npm run build        # bundles dist/cli.js for `npm start` / the `atlas` bin
 ```
 
 Tests that touch the config/session files set `ATLAS_CLI_CONFIG_DIR` to a
 temp directory rather than a real home directory - see
 `src/config/paths.ts`.
 
-`src/api/client.ts` is the one place that knows Atlas's wire format
-(`/health`, `/chat`, `/chat/stream`) - AtlasUI is expected to share this
-same client rather than reimplementing NDJSON parsing a second time, once
-it exists.
+The API client lives in [`packages/client`](../client/README.md) - the one
+place that knows Atlas's wire format (`/health`, `/chat`, `/chat/stream`,
+sessions) - and is shared with AtlasUI. Its tests (NDJSON parsing against a
+real `node:http` server: chunked lines, dropped connections) run there. The
+CLI imports it as `@atlas/client`, and `npm run build` (esbuild, see
+`scripts/build.mjs`) inlines it into `dist/cli.js`, so the published package
+stays a single install.

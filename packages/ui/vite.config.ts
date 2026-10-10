@@ -8,10 +8,9 @@ export default defineConfig({
   base: "/ui/",
   resolve: {
     alias: {
-      // The one AtlasClient, shared with AtlasCLI by source: it is plain
+      // The one AtlasClient, shared with AtlasCLI (packages/client): plain
       // fetch code with no Node-only imports, so it runs in a browser as is.
-      // Moving it to a published package is tracked in #19.
-      "@atlas/client": fileURLToPath(new URL("../cli/src/api/client.ts", import.meta.url)),
+      "@atlas/client": fileURLToPath(new URL("../client/src/index.ts", import.meta.url)),
     },
   },
   server: { port: 5173 },

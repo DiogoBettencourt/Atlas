@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { render } from "ink-testing-library";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AtlasClient } from "../api/client.js";
+import type { AtlasClient } from "@atlas/client";
 import { recordTurn } from "../config/sessions.js";
 import Root from "./Root.js";
 

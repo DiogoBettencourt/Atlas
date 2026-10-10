@@ -2,13 +2,13 @@
 // Entry point: loads local config, parses flags, resolves which session
 // to use (a specific one, a fresh one, or an interactively picked one),
 // and renders the Ink app. Kept as thin as reasonably possible - wire
-// format lives in api/client.ts, local state in config/, interaction in
+// format lives in the shared @atlas/client package (packages/client), local state in config/, interaction in
 // ui/.
 import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 import { render } from "ink";
 import React from "react";
-import { AtlasClient } from "./api/client.js";
+import { AtlasClient } from "@atlas/client";
 import { loadConfig, resolveDefaults } from "./config/config.js";
 import { sessionsFor } from "./config/sessions.js";
 import { launchServer, ServerLaunchError } from "./server/launch.js";

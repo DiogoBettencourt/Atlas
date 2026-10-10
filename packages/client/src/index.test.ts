@@ -5,7 +5,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { AtlasApiError, AtlasClient, AtlasConnectError, type AgentEvent } from "./client.js";
+import { AtlasApiError, AtlasClient, AtlasConnectError, type AgentEvent } from "./index.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
