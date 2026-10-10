@@ -124,6 +124,9 @@ void APIServer::registerRoutes() {
         std::string session_id = body["session_id"].get<std::string>();
         std::string message = body["message"].get<std::string>();
         std::string workspace_name = body.value("workspace", std::string("default"));
+        // Opt-in: a client that wants the model's text as it is generated
+        // (AtlasUI) sets "stream_deltas": true. Others see the same events as before.
+        const bool stream_deltas = body.value("stream_deltas", false);
 
         std::filesystem::path workspace_root;
         try {
@@ -136,7 +139,7 @@ void APIServer::registerRoutes() {
 
         res.set_chunked_content_provider(
             "application/x-ndjson",
-            [this, message, session_id, workspace_root](std::size_t /*offset*/,
+            [this, message, session_id, workspace_root, stream_deltas](std::size_t /*offset*/,
                                                         httplib::DataSink& sink) {
                 auto emit = [&sink](const nlohmann::json& event) {
                     std::string line = event.dump();
@@ -146,7 +149,7 @@ void APIServer::registerRoutes() {
 
                 try {
                     std::string reply =
-                        agent_.chat(message, session_id, workspace_root.string(), emit);
+                        agent_.chat(message, session_id, workspace_root.string(), emit, stream_deltas);
                     (void)reply;
                 } catch (const std::exception& e) {
                     emit(nlohmann::json{{"type", "error"}, {"message", e.what()}});

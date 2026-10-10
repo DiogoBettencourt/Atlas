@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -36,6 +37,28 @@ public:
         const std::string& model,
         const nlohmann::json& messages,
         const nlohmann::json& tools = nlohmann::json::array()) = 0;
+
+    // Receives each piece of text as the model generates it. `kind` is
+    // "thinking" (reasoning) or "content" (the visible reply); `text` is
+    // just the new piece, not the text so far.
+    using DeltaCallback = std::function<void(const std::string& kind, const std::string& text)>;
+
+    // Same request and the same return value as chat(), but the backend asks
+    // its server to stream and calls `on_delta` as text arrives, so a caller
+    // can show the model's thinking and answer live instead of after the
+    // whole generation. The returned message is the complete one, exactly
+    // what chat() would have returned.
+    //
+    // The default implementation just calls chat() and never calls
+    // `on_delta`, so a backend that can't stream still works.
+    [[nodiscard]] virtual nlohmann::json chatStream(
+        const std::string& model,
+        const nlohmann::json& messages,
+        const nlohmann::json& tools,
+        const DeltaCallback& on_delta) {
+        (void)on_delta;
+        return chat(model, messages, tools);
+    }
 
     // Short identifier for logs / the startup banner, e.g. "ollama".
     [[nodiscard]] virtual std::string name() const = 0;

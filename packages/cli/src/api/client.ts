@@ -11,6 +11,11 @@ export interface AtlasClientOptions {
 export type AgentEvent =
   | { type: "iteration_start"; iteration: number; max_iterations: number }
   | { type: "thinking"; content: string }
+  // Live text, only sent when the request asks for it (ChatRequest.streamDeltas):
+  // just the NEW piece of the model's reasoning / reply, ahead of the usual
+  // "thinking" / "assistant_thought" / "final" events that carry the complete text.
+  | { type: "thinking_delta"; content: string }
+  | { type: "content_delta"; content: string }
   | { type: "assistant_thought"; content: string }
   | { type: "tool_call"; name: string; arguments: unknown }
   | { type: "tool_result"; name: string; result: unknown }
@@ -21,6 +26,10 @@ export interface ChatRequest {
   sessionId: string;
   message: string;
   workspace?: string;
+  // Ask /chat/stream to also send the model's text as it is generated
+  // (thinking_delta / content_delta events). Off by default so existing
+  // clients see exactly the events they always did.
+  streamDeltas?: boolean;
 }
 
 export interface ChatResponse {
@@ -90,6 +99,7 @@ function requestBody(request: ChatRequest): Record<string, unknown> {
     session_id: request.sessionId,
     message: request.message,
     workspace: request.workspace,
+    ...(request.streamDeltas ? { stream_deltas: true } : {}),
   };
 }
 

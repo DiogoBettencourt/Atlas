@@ -110,7 +110,7 @@ export default function App({ client: injected }: { client?: AtlasClient }) {
         setTurns((all) => all.map((t) => (t.id === assistantId && t.role === "assistant" ? fn(t) : t)));
 
       try {
-        await client.sendMessage({ sessionId, message: text }, (event) => update((a) => applyEvent(a, event)), {
+        await client.sendMessage({ sessionId, message: text, streamDeltas: true }, (event) => update((a) => applyEvent(a, event)), {
           onRetry: () => setNotice("Connection hiccup, retrying…"),
           onFallback: () => setNotice("Streaming isn't available right now; waiting for the full reply."),
         });

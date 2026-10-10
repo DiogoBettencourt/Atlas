@@ -53,6 +53,9 @@ nlohmann::json Application::buildConfig(int argc, char* argv[]) {
     config["data_dir"] = argOr(argc, argv, "data-dir", "./atlas_data/storage");
     config["workspaces_dir"] = argOr(argc, argv, "workspaces-dir", "./atlas_data/workspaces");
     config["ui_dir"] = argOr(argc, argv, "ui-dir", "./packages/ui/dist");
+    // --stream=off asks the backend for one whole reply per step instead of
+    // a live stream; an escape hatch for a server that mishandles streaming.
+    config["stream"] = argOr(argc, argv, "stream", "on") != "off";
     config["backend"] = argOr(argc, argv, "backend", "ollama");
     config["ollama_host"] = argOr(argc, argv, "ollama-host", "127.0.0.1");
     config["ollama_port"] = std::stoi(argOr(argc, argv, "ollama-port", "11434"));
@@ -95,6 +98,8 @@ Application::Application(int argc, char* argv[])
       agent_(*llm_backend_, tool_manager_, session_manager_, config_["model"].get<std::string>()),
       api_server_(agent_, workspace_manager_, session_manager_,
                   config_["bind_address"].get<std::string>(), config_["port"].get<int>()) {
+    agent_.setStreaming(config_["stream"].get<bool>());
+
     std::string self_repo = config_["self_repo"].get<std::string>();
     std::string github_repo = config_["github_repo"].get<std::string>();
     tool_manager_.registerDefaultTools(symbol_indexer_, self_repo, github_repo);

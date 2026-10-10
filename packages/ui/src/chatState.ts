@@ -3,11 +3,13 @@
 // becomes turns again. No React in here so it is easy to test.
 import type { AgentEvent, RawSessionMessage } from "@atlas/client";
 
+// `streaming` marks text still being generated (it grows with each delta
+// event); the complete event that follows replaces it and clears the flag.
 export type Block =
-  | { kind: "thinking"; id: string; iteration: number; text: string }
+  | { kind: "thinking"; id: string; iteration: number; text: string; streaming?: boolean }
   | { kind: "thought"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; args: unknown; result?: unknown; done: boolean }
-  | { kind: "text"; id: string; text: string };
+  | { kind: "text"; id: string; text: string; streaming?: boolean };
 
 export interface UserTurn {
   id: string;
@@ -31,19 +33,82 @@ export function newAssistantTurn(id: string): AssistantTurn {
   return { id, role: "assistant", blocks: [], status: "running", iteration: 0, maxIterations: 0 };
 }
 
+function lastIndexWhere(blocks: Block[], test: (b: Block) => boolean): number {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    if (test(blocks[i])) return i;
+  }
+  return -1;
+}
+
+const isLiveThinking = (b: Block) => b.kind === "thinking" && b.streaming === true;
+const isLiveText = (b: Block) => b.kind === "text" && b.streaming === true;
+
+// Replaces the block at `index` (or appends if there is none).
+function withBlock(turn: AssistantTurn, index: number, block: Block): AssistantTurn {
+  if (index < 0) return { ...turn, blocks: [...turn.blocks, block] };
+  const blocks = turn.blocks.slice();
+  blocks[index] = block;
+  return { ...turn, blocks };
+}
+
+// A turn that ended (final, error) shouldn't keep blocks marked as live.
+function settle(turn: AssistantTurn): AssistantTurn {
+  if (!turn.blocks.some((b) => (b.kind === "thinking" || b.kind === "text") && b.streaming)) return turn;
+  return {
+    ...turn,
+    blocks: turn.blocks.map((b) => ((b.kind === "thinking" || b.kind === "text") && b.streaming ? { ...b, streaming: false } : b)),
+  };
+}
+
 // Folds one stream event into an assistant turn, returning a new turn.
+//
+// Live text arrives as thinking_delta / content_delta (just the new piece)
+// and is appended to a growing block. The complete event for the same text
+// (thinking / assistant_thought / final) then replaces that block, so the
+// result is identical whether or not the deltas were sent.
 export function applyEvent(turn: AssistantTurn, event: AgentEvent): AssistantTurn {
   const nextId = `${turn.id}-${turn.blocks.length}`;
   switch (event.type) {
     case "iteration_start":
       return { ...turn, iteration: event.iteration, maxIterations: event.max_iterations };
-    case "thinking":
-      return {
-        ...turn,
-        blocks: [...turn.blocks, { kind: "thinking", id: nextId, iteration: turn.iteration, text: event.content }],
-      };
-    case "assistant_thought":
-      return { ...turn, blocks: [...turn.blocks, { kind: "thought", id: nextId, text: event.content }] };
+    case "thinking_delta": {
+      const index = lastIndexWhere(turn.blocks, isLiveThinking);
+      const current = index >= 0 ? (turn.blocks[index] as Extract<Block, { kind: "thinking" }>) : undefined;
+      return withBlock(turn, index, {
+        kind: "thinking",
+        id: current?.id ?? nextId,
+        iteration: current?.iteration ?? turn.iteration,
+        text: (current?.text ?? "") + event.content,
+        streaming: true,
+      });
+    }
+    case "content_delta": {
+      const index = lastIndexWhere(turn.blocks, isLiveText);
+      const current = index >= 0 ? (turn.blocks[index] as Extract<Block, { kind: "text" }>) : undefined;
+      return withBlock(turn, index, {
+        kind: "text",
+        id: current?.id ?? nextId,
+        text: (current?.text ?? "") + event.content,
+        streaming: true,
+      });
+    }
+    case "thinking": {
+      const index = lastIndexWhere(turn.blocks, isLiveThinking);
+      const current = index >= 0 ? (turn.blocks[index] as Extract<Block, { kind: "thinking" }>) : undefined;
+      return withBlock(turn, index, {
+        kind: "thinking",
+        id: current?.id ?? nextId,
+        iteration: current?.iteration ?? turn.iteration,
+        text: event.content,
+      });
+    }
+    case "assistant_thought": {
+      // The reply text that was streaming turns out to be a remark made
+      // alongside tool calls, not the final answer.
+      const index = lastIndexWhere(turn.blocks, isLiveText);
+      const id = index >= 0 ? turn.blocks[index].id : nextId;
+      return withBlock(turn, index, { kind: "thought", id, text: event.content });
+    }
     case "tool_call":
       return {
         ...turn,
@@ -66,17 +131,20 @@ export function applyEvent(turn: AssistantTurn, event: AgentEvent): AssistantTur
       blocks[index] = { ...call, result: event.result, done: true };
       return { ...turn, blocks };
     }
-    case "final":
-      return { ...turn, blocks: [...turn.blocks, { kind: "text", id: nextId, text: event.reply }], status: "done" };
+    case "final": {
+      const index = lastIndexWhere(turn.blocks, isLiveText);
+      const id = index >= 0 ? turn.blocks[index].id : nextId;
+      return settle({ ...withBlock(turn, index, { kind: "text", id, text: event.reply }), status: "done" });
+    }
     case "error":
-      return { ...turn, status: "error", error: event.message };
+      return settle({ ...turn, status: "error", error: event.message });
   }
 }
 
 // Marks a turn as failed with a client-side error (the stream died, the
 // server was unreachable) and stops any tool still shown as running.
 export function failTurn(turn: AssistantTurn, message: string): AssistantTurn {
-  return { ...turn, status: "error", error: message };
+  return settle({ ...turn, status: "error", error: message });
 }
 
 interface RawToolCall {
