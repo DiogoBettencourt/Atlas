@@ -11,6 +11,7 @@ import React from "react";
 import { AtlasClient } from "./api/client.js";
 import { loadConfig, resolveDefaults } from "./config/config.js";
 import { sessionsFor } from "./config/sessions.js";
+import { exitWhenDone } from "./lifecycle.js";
 import { launchServer, ServerLaunchError } from "./server/launch.js";
 import { configDir } from "./config/paths.js";
 import { join } from "node:path";
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
   });
   process.stdout.write(ENTER_ALT_SCREEN + HIDE_CURSOR);
 
-  render(
+  const app = render(
     React.createElement(Root, {
       client,
       initialSessionId: sessionId,
@@ -148,6 +149,15 @@ async function main(): Promise<void> {
       server: options.server,
       workspace: options.workspace,
     })
+  );
+
+  // Ink's exit() (used by /exit and /quit) only unmounts the app. End the
+  // process explicitly, or stdin keeps it alive and the shell never comes back.
+  // process.exit runs the "exit" handler above, which restores the terminal.
+  await exitWhenDone(
+    () => app.waitUntilExit(),
+    (code) => process.exit(code),
+    (message) => console.error(message)
   );
 }
 
