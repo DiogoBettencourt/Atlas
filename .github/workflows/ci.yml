@@ -40,6 +40,25 @@ jobs:
           msg=$(grep -E "FAIL|Failed|\*\*\*|Errors while" ctest.log | tail -c 3500 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=Failing test output::${msg}"
 
+      # The real atlas binary, a stub Ollama and the real client over HTTP
+      # (see packages/client/README.md). Ubuntu only: it needs no second
+      # platform, and the binary is already built here.
+      - uses: actions/setup-node@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: packages/client/package-lock.json
+
+      - name: End-to-end (real atlas binary, stub Ollama)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: packages/client
+        env:
+          ATLAS_BIN: ../../build/atlas
+        run: |
+          npm ci
+          npm run test:e2e
+
   # Branch protection's "required status checks" has to name every leg of
   # the matrix job above individually, and forgets about a leg silently
   # if the matrix ever changes (add an OS here, branch protection doesn't
