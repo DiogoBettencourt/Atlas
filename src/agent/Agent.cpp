@@ -210,14 +210,21 @@ std::string Agent::chat(const std::string& message,
                          const std::string& session_id,
                          const std::string& workspace_root,
                          const EventCallback& on_event,
-                         bool stream_deltas) {
+                         bool stream_deltas,
+                         const CancelCheck& cancelled) {
     auto emit = [&on_event](const nlohmann::json& event) {
         if (on_event) on_event(event);
+    };
+    auto is_cancelled = [&cancelled] { return cancelled && cancelled(); };
+    auto finish_cancelled = [&emit]() -> std::string {
+        emit({{"type", "cancelled"}});
+        return std::string{};
     };
 
     session_manager_.appendMessage(session_id, {{"role", "user"}, {"content", message}});
 
     for (unsigned int iteration = 0; iteration < max_iterations_; ++iteration) {
+        if (is_cancelled()) return finish_cancelled();
         emit({{"type", "iteration_start"},
               {"iteration", iteration + 1},
               {"max_iterations", max_iterations_}});
@@ -306,23 +313,44 @@ std::string Agent::chat(const std::string& message,
 
         nlohmann::json assistant_message;
         try {
-            if (streaming_ && stream_deltas && on_event) {
-                // Report the model's text live as it is generated. The
-                // complete text still arrives in the events below.
-                assistant_message = llm_backend_.chatStream(
-                    model_name_, history, tool_manager_.schemasJson(),
-                    [&emit](const std::string& kind, const std::string& text) {
+            const bool live_text = stream_deltas && on_event;
+            if (streaming_ && (live_text || cancelled)) {
+                // Report the model's text live as it is generated (the
+                // complete text still arrives in the events below). A
+                // caller that can cancel gets a streaming request even if
+                // it doesn't want the text, since that is the kind of
+                // request that can be dropped half-way.
+                LLMBackend::DeltaCallback on_delta;
+                if (live_text) {
+                    on_delta = [&emit](const std::string& kind, const std::string& text) {
                         emit({{"type", kind == "thinking" ? "thinking_delta" : "content_delta"},
                               {"content", text}});
-                    });
+                    };
+                }
+                assistant_message = llm_backend_.chatStream(
+                    model_name_, history, tool_manager_.schemasJson(), on_delta, cancelled);
             } else {
                 assistant_message = llm_backend_.chat(model_name_, history, tool_manager_.schemasJson());
             }
+        } catch (const Cancelled& stopped) {
+            // Keep what the user already saw, so reopening the session shows
+            // the same thing. Tool calls were never part of it.
+            nlohmann::json partial = stopped.partial();
+            if (!partial.value("content", std::string{}).empty()) {
+                partial["role"] = "assistant";
+                partial.erase("tool_calls");
+                session_manager_.appendMessage(session_id, partial);
+            }
+            return finish_cancelled();
         } catch (const std::exception& e) {
             std::string error_msg = std::string("Agent error: ") + e.what();
             emit({{"type", "error"}, {"message", error_msg}});
             return error_msg;
         }
+
+        // The request finished just as Stop was pressed (or the backend can't
+        // be interrupted): drop the reply rather than act on it.
+        if (is_cancelled()) return finish_cancelled();
 
         session_manager_.appendMessage(session_id, assistant_message);
 
@@ -353,7 +381,22 @@ std::string Agent::chat(const std::string& message,
             emit({{"type", "assistant_thought"}, {"content", interim_content}});
         }
 
+        bool stopped_mid_step = false;
         for (const auto& call : tool_calls) {
+            if (stopped_mid_step || is_cancelled()) {
+                // Stopped before this tool ran. The model's message already
+                // asked for it, so record a result anyway - a history with a
+                // tool call that has no answer is rejected by some servers.
+                stopped_mid_step = true;
+                nlohmann::json skipped{
+                    {"role", "tool"},
+                    {"content", nlohmann::json{{"error", "cancelled by the user before this tool ran"}}.dump()}};
+                if (call.contains("function") && call["function"].contains("name")) {
+                    skipped["name"] = call["function"]["name"];
+                }
+                session_manager_.appendMessage(session_id, skipped);
+                continue;
+            }
             std::string tool_name;
             nlohmann::json arguments = nlohmann::json::object();
 
@@ -385,6 +428,7 @@ std::string Agent::chat(const std::string& message,
             }
             session_manager_.appendMessage(session_id, tool_message);
         }
+        if (stopped_mid_step) return finish_cancelled();
     }
 
     std::string give_up = "Agent stopped: exceeded maximum tool-call iterations (" +

@@ -21,7 +21,7 @@ export interface AssistantTurn {
   id: string;
   role: "assistant";
   blocks: Block[];
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "cancelled";
   error?: string;
   iteration: number;
   maxIterations: number;
@@ -136,6 +136,8 @@ export function applyEvent(turn: AssistantTurn, event: AgentEvent): AssistantTur
       const id = index >= 0 ? turn.blocks[index].id : nextId;
       return settle({ ...withBlock(turn, index, { kind: "text", id, text: event.reply }), status: "done" });
     }
+    case "cancelled":
+      return settle({ ...turn, status: "cancelled" });
     case "error":
       return settle({ ...turn, status: "error", error: event.message });
   }
@@ -172,8 +174,8 @@ function parseResult(value: unknown): unknown {
 // Rebuilds the transcript from GET /sessions/:id/history. Unlike AtlasCLI,
 // which only shows the user/assistant text, this also restores the tool
 // calls (and their results) between a question and its answer, so a
-// reopened session looks like the live one. Thinking is not persisted, so
-// it can't be restored.
+// reopened session looks like the live one, thinking included (Atlas saves
+// a reply's reasoning next to it).
 export function turnsFromHistory(messages: RawSessionMessage[], idPrefix = "h"): Turn[] {
   const turns: Turn[] = [];
   let current: AssistantTurn | undefined;
@@ -194,6 +196,10 @@ export function turnsFromHistory(messages: RawSessionMessage[], idPrefix = "h"):
       }
     } else if (m.role === "assistant") {
       const turn = ensureAssistant();
+      if (typeof m.thinking === "string" && m.thinking.trim().length > 0) {
+        const iteration = turn.blocks.filter((b) => b.kind === "thinking").length + 1;
+        turn.blocks.push({ kind: "thinking", id: `${turn.id}-${turn.blocks.length}`, iteration, text: m.thinking });
+      }
       if (typeof m.content === "string" && m.content.length > 0) {
         const hasCalls = Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
         turn.blocks.push({

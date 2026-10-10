@@ -226,6 +226,29 @@ doesn't exist yet, rather than a `404` — the same "doesn't exist until
 its first message" semantics `SessionManager::getHistory` already has
 internally.
 
+### `POST /sessions/:id/cancel`
+Stops the `/chat/stream` turn currently running for that session (what
+AtlasUI's Stop button calls). Send any small JSON body, e.g. `{}`:
+```json
+{"session_id": "s1", "cancelled": true}
+```
+`cancelled` is `false` when no turn was running for that session. The call
+only *asks*: the model request is dropped right away (so the model server stops
+generating), the remaining tool calls of the current step are skipped, and the
+turn's own stream then ends with a `{"type":"cancelled"}` event in place of
+`final`. Anything the model had already said is kept in the session, and every
+tool call it asked for has a result, so the next message simply continues the
+conversation.
+
+One limitation on Windows: if Stop is pressed while the model is still reading
+the prompt and hasn't produced anything yet, the turn ends when its first output
+arrives (Windows doesn't let one thread interrupt another's blocked read). Once
+the model is generating, Stop is immediate on every platform.
+
+Only one turn can run per session at a time: a second `POST /chat/stream` for
+a session that is still busy gets `409`. If the client simply disconnects
+(closes the tab), the turn is stopped the same way.
+
 ### `DELETE /sessions/:id`
 Permanently deletes a session's history and any compaction summary, both
 in memory and on disk (`SessionManager::resetSession`):

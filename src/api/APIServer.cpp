@@ -110,6 +110,25 @@ void APIServer::registerRoutes() {
             "application/json");
     });
 
+    // Stop button: asks the turn running for this session (if any) to end.
+    // The turn's own stream then ends with a {"type":"cancelled"} event, which
+    // is how a client learns it has really stopped - this call only asks.
+    server_.Post(R"(/sessions/([^/]+)/cancel)", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string session_id = req.matches[1];
+        bool was_running = false;
+        {
+            std::lock_guard<std::mutex> lock(running_mutex_);
+            auto it = running_.find(session_id);
+            if (it != running_.end()) {
+                it->second->store(true);
+                was_running = true;
+            }
+        }
+        res.set_content(
+            nlohmann::json{{"session_id", session_id}, {"cancelled", was_running}}.dump(),
+            "application/json");
+    });
+
     server_.Post("/chat/stream", [this](const httplib::Request& req, httplib::Response& res) {
         auto body = nlohmann::json::parse(req.body, nullptr, false);
         if (body.is_discarded() || !body.contains("message") || !body.contains("session_id")) {
@@ -137,19 +156,39 @@ void APIServer::registerRoutes() {
             return;
         }
 
+        // One turn at a time per session: two at once would interleave their
+        // messages in the same history. (A client that pressed Stop waits for
+        // the "cancelled" event before sending again, so it never hits this.)
+        auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
+        {
+            std::lock_guard<std::mutex> lock(running_mutex_);
+            if (running_.count(session_id) != 0) {
+                res.status = 409;
+                res.set_content(
+                    nlohmann::json{{"error", "a turn is already running for this session"}}.dump(),
+                    "application/json");
+                return;
+            }
+            running_[session_id] = cancel_flag;
+        }
+
         res.set_chunked_content_provider(
             "application/x-ndjson",
-            [this, message, session_id, workspace_root, stream_deltas](std::size_t /*offset*/,
-                                                        httplib::DataSink& sink) {
-                auto emit = [&sink](const nlohmann::json& event) {
+            [this, message, session_id, workspace_root, stream_deltas, cancel_flag](
+                std::size_t /*offset*/, httplib::DataSink& sink) {
+                auto emit = [&sink, &cancel_flag](const nlohmann::json& event) {
                     std::string line = event.dump();
                     line.push_back('\n');
-                    sink.write(line.data(), line.size());
+                    // A failed write means the client is gone (tab closed,
+                    // connection dropped): nobody is left to read the answer,
+                    // so stop the model instead of letting it run on.
+                    if (!sink.write(line.data(), line.size())) cancel_flag->store(true);
                 };
 
                 try {
-                    std::string reply =
-                        agent_.chat(message, session_id, workspace_root.string(), emit, stream_deltas);
+                    std::string reply = agent_.chat(
+                        message, session_id, workspace_root.string(), emit, stream_deltas,
+                        [&cancel_flag] { return cancel_flag->load(); });
                     (void)reply;
                 } catch (const std::exception& e) {
                     emit(nlohmann::json{{"type", "error"}, {"message", e.what()}});
@@ -157,6 +196,13 @@ void APIServer::registerRoutes() {
 
                 sink.done();
                 return true;
+            },
+            // Runs when the response is finished with, whether or not the
+            // provider above ever ran to completion.
+            [this, session_id, cancel_flag](bool /*success*/) {
+                std::lock_guard<std::mutex> lock(running_mutex_);
+                auto it = running_.find(session_id);
+                if (it != running_.end() && it->second == cancel_flag) running_.erase(it);
             });
     });
 }
@@ -185,7 +231,8 @@ bool APIServer::serveUi(const std::string& directory) {
 void APIServer::run() {
     std::cout << "Atlas API server listening on http://" << bind_address_ << ":" << port_
               << " (POST /chat, POST /chat/stream, GET /health, "
-                 "GET /sessions, GET /sessions/:id/history, DELETE /sessions/:id)" << std::endl;
+                 "GET /sessions, GET /sessions/:id/history, POST /sessions/:id/cancel, "
+                 "DELETE /sessions/:id)" << std::endl;
     if (!server_.listen(bind_address_, port_)) {
         throw std::runtime_error("APIServer: failed to bind " + bind_address_ + ":" +
                                  std::to_string(port_));

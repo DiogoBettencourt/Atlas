@@ -3,7 +3,11 @@
 #include "atlas/agent/Agent.hpp"
 #include "atlas/core/SessionManager.hpp"
 #include "atlas/core/WorkspaceManager.hpp"
+#include <atomic>
 #include <httplib.h>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <string>
 
@@ -48,6 +52,13 @@ private:
     std::string bind_address_;
     int port_;
     nlohmann::json info_ = nlohmann::json::object();
+
+    // The /chat/stream turns running right now, by session id, each with the
+    // flag that POST /sessions/:id/cancel (or the client disconnecting) sets.
+    // The turn polls its flag; see Agent::chat's `cancelled`.
+    std::mutex running_mutex_;
+    std::map<std::string, std::shared_ptr<std::atomic<bool>>> running_;
+
     httplib::Server server_;
 };
 

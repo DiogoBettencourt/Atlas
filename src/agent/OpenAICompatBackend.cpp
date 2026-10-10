@@ -1,9 +1,11 @@
 #include "atlas/agent/OpenAICompatBackend.hpp"
 
+#include "CancelWatch.hpp"
 #include "StreamLines.hpp"
 
 #include <httplib.h>
 
+#include <atomic>
 #include <deque>
 #include <exception>
 #include <map>
@@ -293,7 +295,7 @@ json OpenAICompatBackend::chat(const std::string& model, const json& messages, c
 }
 
 json OpenAICompatBackend::chatStream(const std::string& model, const json& messages, const json& tools,
-                                     const DeltaCallback& on_delta) {
+                                     const DeltaCallback& on_delta, const CancelCheck& cancelled) {
     httplib::Client client(origin_);
     if (!client.is_valid()) {
         throw std::runtime_error(std::string(kErrPrefix) + "cannot create a client for '" + api_base_ +
@@ -325,6 +327,7 @@ json OpenAICompatBackend::chatStream(const std::string& model, const json& messa
     std::string reasoning;
     std::map<int, ToolAccumulator> tool_parts;
     std::exception_ptr callback_error;
+    std::atomic<bool> was_cancelled{false};
     ThinkSplitter splitter;
     StreamLines lines;
 
@@ -393,6 +396,10 @@ json OpenAICompatBackend::chatStream(const std::string& model, const json& messa
         return true;
     };
     request.content_receiver = [&](const char* data, std::size_t length, std::uint64_t, std::uint64_t) {
+        if (cancelled && cancelled()) {
+            was_cancelled = true;
+            return false;
+        }
         if (status != 200) {
             error_body.append(data, length);
             return true;
@@ -406,8 +413,21 @@ json OpenAICompatBackend::chatStream(const std::string& model, const json& messa
         return true;
     };
 
+    // Closes the connection the moment Stop is pressed, even while the server
+    // is still reading the prompt and has sent nothing yet.
+    CancelWatch watch(cancelled, [&] {
+        was_cancelled = true;
+        client.stop();
+    });
+
     auto response = client.send(request);
 
+    if (was_cancelled) {
+        // Keep what the user already saw: the text so far, minus any tool calls.
+        json wire{{"role", "assistant"}, {"content", content}};
+        if (!reasoning.empty()) wire["reasoning_content"] = reasoning;
+        throw Cancelled(fromWireMessage(wire));
+    }
     if (callback_error) std::rethrow_exception(callback_error);
     if (!response && status == 0) {
         throw std::runtime_error(std::string(kErrPrefix) + "failed to reach " + api_base_ +

@@ -20,6 +20,9 @@ export type AgentEvent =
   | { type: "tool_call"; name: string; arguments: unknown }
   | { type: "tool_result"; name: string; result: unknown }
   | { type: "final"; reply: string }
+  // The turn was stopped (see AtlasClient.cancel). Ends the stream in place of
+  // "final"; whatever the model had said by then is kept in the session.
+  | { type: "cancelled" }
   | { type: "error"; message: string };
 
 export interface ChatRequest {
@@ -51,6 +54,8 @@ export interface RawSessionMessage {
   content?: string;
   tool_calls?: unknown[];
   name?: string;
+  // The model's reasoning for an assistant message, when it produced any.
+  thinking?: string;
 }
 
 // One row of GET /sessions - what a session picker needs to render an entry.
@@ -209,6 +214,34 @@ export class AtlasClient {
     }
   }
 
+  // Asks Atlas to stop the turn currently running for `sessionId` (the Stop
+  // button). Resolves to whether there was a running turn to stop. This only
+  // asks: the turn's own stream is what reports that it really ended, with a
+  // {"type":"cancelled"} event, so a caller should keep waiting on that
+  // stream (and not send another message to this session) until it does.
+  // Throws AtlasConnectError if the server can't be reached.
+  async cancel(sessionId: string): Promise<boolean> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+        method: "POST",
+        // The server reads a POST body, so send a (trivial) one.
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+    } catch (err) {
+      throw new AtlasConnectError(
+        `couldn't reach Atlas server at ${this.baseUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        err
+      );
+    }
+    if (!res.ok) {
+      throw new AtlasApiError(`Atlas server returned HTTP ${res.status} stopping session ${sessionId}`);
+    }
+    const body = (await res.json().catch(() => ({}))) as { cancelled?: unknown };
+    return body.cancelled === true;
+  }
+
   // Liveness check against GET /health. Never throws - a request that
   // can't even connect is just as "not ok" as one that connects and
   // reports something other than {"status":"ok"}, and callers (the UI)
@@ -318,6 +351,7 @@ export class AtlasClient {
     let buffer = "";
     let finalReply: string | undefined;
     let streamError: string | undefined;
+    let wasCancelled = false;
 
     try {
       for (;;) {
@@ -344,6 +378,7 @@ export class AtlasClient {
             onEvent(event);
             if (event.type === "final") finalReply = event.reply;
             if (event.type === "error") streamError = event.message;
+            if (event.type === "cancelled") wasCancelled = true;
           }
 
           newlineIndex = buffer.indexOf("\n");
@@ -355,6 +390,9 @@ export class AtlasClient {
 
     if (streamError !== undefined) {
       throw new AtlasApiError(streamError);
+    }
+    if (finalReply === undefined && wasCancelled) {
+      return "";
     }
     if (finalReply === undefined) {
       throw new AtlasApiError("Atlas server closed the stream without a final or error event");

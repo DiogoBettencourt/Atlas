@@ -30,7 +30,8 @@ public:
         const std::string& model,
         const nlohmann::json& messages,
         const nlohmann::json& tools,
-        const DeltaCallback& on_delta) override;
+        const DeltaCallback& on_delta,
+        const CancelCheck& cancelled = {}) override;
 
     [[nodiscard]] std::string name() const override { return "ollama"; }
 

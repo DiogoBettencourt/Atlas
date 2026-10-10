@@ -51,15 +51,22 @@ so no proxy is needed.
 - The UI asks `/chat/stream` for `stream_deltas`, so the model's thinking and
   reply appear as they are generated, one piece at a time. `chatState.ts` grows
   a live block from the pieces and swaps in the complete text when it arrives.
+- While a turn runs, the composer's Send becomes **Stop** (or press Esc). It calls
+  `POST /sessions/:id/cancel` and keeps waiting on the turn's stream, which ends
+  with a `cancelled` event; only then is the composer unlocked again. A reopened
+  session shows each reply's saved thinking, collapsed.
 - Sessions come from `GET /sessions`; opening one loads
   `GET /sessions/:id/history`; deleting one calls `DELETE /sessions/:id` after a
   confirmation.
 
 ## Known limitations
 
-- **No Stop button yet.** Atlas can't cancel a turn that is already running, so
-  the UI waits for it to finish rather than pretend to stop it.
-- Thinking isn't saved in a session's history, so it shows live but not when you
-  reopen a session.
+- **Stop is cooperative.** It stops the model right away and skips any tool
+  calls that hadn't started, but a tool that is already running (a slow search,
+  say) finishes first, so "Stopping…" can last a moment. On Windows, pressing it
+  before the model has produced anything at all (it is still reading a long
+  prompt) takes effect when its first output arrives.
+- A turn's partial answer is kept when you stop it, but its partial thinking is
+  only kept if the model had also started answering.
 - Assistant text supports code blocks and `inline code` only, not full Markdown.
 - One workspace (`default`); a workspace picker isn't built yet.
