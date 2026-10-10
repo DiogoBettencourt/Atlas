@@ -29,6 +29,18 @@ jobs:
         working-directory: build
         run: ctest --output-on-failure --build-config Release
 
+      # The job log is awkward to get at; this puts the failing tests' own
+      # output in the check's annotations, where it shows on the PR.
+      - name: Show failing tests
+        if: failure()
+        shell: bash
+        working-directory: build
+        run: |
+          ctest --rerun-failed --output-on-failure --build-config Release > ctest-failed.log 2>&1 || true
+          cat ctest-failed.log
+          msg=$(tail -c 3500 ctest-failed.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Failing test output::${msg}"
+
   # Branch protection's "required status checks" has to name every leg of
   # the matrix job above individually, and forgets about a leg silently
   # if the matrix ever changes (add an OS here, branch protection doesn't
