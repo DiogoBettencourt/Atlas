@@ -11,8 +11,8 @@ No OpenAI service is involved - `llama-server` is llama.cpp's own HTTP server,
 running on your machine.
 
 **Status: measured (2026-10-10, RX 9060 XT).** Results and the Phase 2
-recommendation are at the bottom. Tool calling against a real llama-server has
-not been tested yet.
+recommendation are at the bottom. Tool calling against a real llama-server was
+not tested (see the end of this doc).
 
 ## What gets compared
 
@@ -249,7 +249,11 @@ needs. If such a need appears, it should be measured against this baseline first
 
 ### Not yet covered
 
-- **Tool calling against a real llama-server.** Only speed was measured; the
-  translation layer is covered by tests against a stub server.
+- **Tool calling against a real llama-server - deliberately skipped.** Only
+  speed was measured. The translation layer is covered by tests against a stub
+  server, but no real model has called a tool through `--backend=openai`. It was
+  judged not worth testing because the recommendation is not to build on this
+  engine path; anyone adopting `llama-server` as their daily backend should try
+  it first (needs `--jinja` and a tool-aware chat template).
 - **`--flash-attn off`** (and other settings) for the long-context generation gap.
 - Other models and quantizations; this is one model on one machine.
