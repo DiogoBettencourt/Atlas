@@ -91,7 +91,7 @@ for `search_symbol`.
 ### `GET /health`
 Liveness check. Returns `{"status": "ok"}` plus what this server is running,
 so a client can show it:
-`{"status": "ok", "version": "0.8.1", "backend": "ollama", "model": "qwen3:14b"}`.
+`{"status": "ok", "version": "0.9.0", "backend": "ollama", "model": "qwen3:14b"}`.
 Clients should only rely on `status`; the other fields may grow.
 
 ### `POST /chat`
