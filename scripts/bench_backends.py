@@ -8,7 +8,9 @@ Standard library only, so it runs unchanged on Windows, Linux and macOS:
         --llama-url http://127.0.0.1:8081
 
 Point it at one server or both (leave out --ollama-model to skip Ollama, or
---llama-url to skip llama-server). For each backend it sends the same fixed
+--llama-url to skip llama-server). On a single GPU run them one at a time
+(a 14B model will not fit twice in 16 GB), saving each run with --output, then
+merge the saved files into one table with --combine. For each backend it sends the same fixed
 prompts with temperature 0 and the same token cap, streams the reply, and
 reports time-to-first-token plus prefill and decode speed, as the median of
 --runs runs after one untimed warm-up.
@@ -275,14 +277,35 @@ def parse_args(argv=None):
     p.add_argument("--ctx", type=int, default=8192, help="context size sent to Ollama; start llama-server with the same -c")
     p.add_argument("--no-think", action="store_true", help="ask both servers to disable reasoning output (best effort)")
     p.add_argument("--output", help="also write raw results to this JSON file")
+    p.add_argument("--combine", nargs="+", metavar="FILE",
+                   help="don't benchmark; print one table from result files previously saved with --output")
     args = p.parse_args(argv)
-    if not args.ollama_model and not args.llama_url:
-        p.error("give at least one of --ollama-model or --llama-url")
+    if not args.combine and not args.ollama_model and not args.llama_url:
+        p.error("give at least one of --ollama-model or --llama-url (or --combine FILE...)")
     return args
+
+
+def combine(paths: list[str]) -> int:
+    rows: list[dict] = []
+    for path in paths:
+        with open(path, encoding="utf-8") as fh:
+            saved = json.load(fh)
+        rows += saved["results"]
+        env = saved.get("environment", {})
+        used = env.get("args", {})
+        print(f"{path}: {env.get('timestamp', '?')}, runs={used.get('runs')}, max_tokens={used.get('max_tokens')}, "
+              f"ctx={used.get('ctx')}, no_think={used.get('no_think')}", file=sys.stderr)
+    if not rows:
+        print("error: no results found in the given files", file=sys.stderr)
+        return 2
+    print(markdown_table(rows))
+    return 0
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    if args.combine:
+        return combine(args.combine)
     rows: list[dict] = []
     environment = {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),

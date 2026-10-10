@@ -38,8 +38,13 @@ The comparison is only meaningful if both servers are configured alike:
   startup log (it reports how many layers were offloaded).
 - **Same sampling and length.** The script uses temperature 0, a fixed seed and
   the same token cap for both.
-- **Nothing else using the GPU**, and a warmed-up run: the script does one
-  untimed warm-up per backend and reports the median of the timed runs.
+- **One model on the GPU at a time.** A 14B model plus its context uses most
+  of a 16 GB card, so Ollama and llama-server cannot both hold it at once
+  without spilling layers to the CPU, which would wreck the numbers. Run the
+  two benchmarks one after the other and unload the first (step 4). Also close
+  anything else that uses the GPU heavily.
+- **A warmed-up run:** the script does one untimed warm-up per backend and
+  reports the median of the timed runs.
 
 ## Step 1: find the exact GGUF Ollama uses
 
@@ -94,21 +99,32 @@ llama-server -m <path-to-gguf> --port 8081 -ngl 99 -c 8192 --flash-attn on --jin
 
 ## Step 4: run the benchmark
 
+Needs Python 3.9+ (standard library only). Run it from the repo root, one
+backend at a time, so only one copy of the model is in GPU memory:
+
 ```
-python scripts/bench_backends.py ^
-    --ollama-model qwen3:14b ^
-    --llama-url http://127.0.0.1:8081 ^
-    --output bench-results.json
+# 1) Ollama. llama-server must NOT be running yet.
+python scripts/bench_backends.py --ollama-model qwen3:14b --output ollama.json
+
+# 2) Unload the model from Ollama (otherwise it stays resident for a few minutes)
+ollama stop qwen3:14b
+
+# 3) Start llama-server (step 3) in another terminal, wait for "listening", then:
+python scripts/bench_backends.py --llama-url http://127.0.0.1:8081 --output llama.json
+
+# 4) Merge both runs into one table
+python scripts/bench_backends.py --combine ollama.json llama.json
 ```
 
-Needs Python 3.9+, standard library only. Useful options: `--runs` (default
-3), `--max-tokens` (default 256), `--ctx` (default 8192), `--no-think` (asks
-both servers to switch off reasoning output, best effort - reasoning models
-otherwise spend part of the token budget thinking), and `--api-key` if the
-server needs one.
+Useful options: `--runs` (default 3), `--max-tokens` (default 256), `--ctx`
+(default 8192), `--no-think` (asks the server to switch off reasoning output,
+best effort; reasoning models otherwise spend part of the token budget
+thinking - use it for both runs or neither), and `--api-key` if the server
+needs one.
 
-It prints a markdown table (paste it below) and, with `--output`, a JSON file
-with every individual run and the server versions.
+Each run prints a markdown table; the final `--combine` step prints the
+side-by-side table to paste into the results section below. The JSON files hold
+every individual run and the server versions.
 
 **Reading the columns**
 
