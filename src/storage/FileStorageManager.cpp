@@ -90,4 +90,23 @@ std::vector<std::string> FileStorageManager::listKeys(const std::string& prefix)
     return results;
 }
 
+std::optional<std::chrono::system_clock::time_point> FileStorageManager::lastModified(
+    const std::string& key) const {
+    std::lock_guard lock(mutex_);
+    std::error_code ec;
+    auto file_time = fs::last_write_time(pathFor(key), ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    // file_clock -> system_clock. std::chrono::clock_cast would do this
+    // directly but isn't available in every standard library we build on,
+    // so re-base against "now" on both clocks instead (good to well under
+    // a second, which is plenty for a "last active" timestamp).
+    auto offset = std::chrono::system_clock::now().time_since_epoch() -
+                  fs::file_time_type::clock::now().time_since_epoch();
+    return std::chrono::system_clock::time_point(
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            file_time.time_since_epoch() + offset));
+}
+
 } // namespace atlas::storage

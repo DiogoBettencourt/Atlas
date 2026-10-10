@@ -52,6 +52,7 @@ nlohmann::json Application::buildConfig(int argc, char* argv[]) {
     config["bind_address"] = argOr(argc, argv, "bind", "127.0.0.1");
     config["data_dir"] = argOr(argc, argv, "data-dir", "./atlas_data/storage");
     config["workspaces_dir"] = argOr(argc, argv, "workspaces-dir", "./atlas_data/workspaces");
+    config["ui_dir"] = argOr(argc, argv, "ui-dir", "./packages/ui/dist");
     config["backend"] = argOr(argc, argv, "backend", "ollama");
     config["ollama_host"] = argOr(argc, argv, "ollama-host", "127.0.0.1");
     config["ollama_port"] = std::stoi(argOr(argc, argv, "ollama-port", "11434"));
@@ -114,6 +115,15 @@ Application::Application(int argc, char* argv[])
         symbol_indexer_.indexDirectory(self_root);
     }
 
+    api_server_.setInfo({{"version", ATLAS_VERSION},
+                         {"backend", llm_backend_->name()},
+                         {"model", config_["model"].get<std::string>()}});
+
+    // Serve the built AtlasUI at /ui if it's there. Missing is normal (the
+    // UI is an optional, separately built package), so only say so quietly.
+    const std::string ui_dir = config_["ui_dir"].get<std::string>();
+    const bool ui_served = !ui_dir.empty() && api_server_.serveUi(ui_dir);
+
     setupSignalHandling();
 
     std::cout << "Atlas v" << ATLAS_VERSION << " initialized" << std::endl
@@ -129,6 +139,11 @@ Application::Application(int argc, char* argv[])
     std::cout << std::endl
               << "  data dir:       " << config_["data_dir"].get<std::string>() << std::endl
               << "  workspaces dir: " << config_["workspaces_dir"].get<std::string>() << std::endl
+              << "  ui:             "
+              << (ui_served ? "http://" + config_["bind_address"].get<std::string>() + ":" +
+                                  std::to_string(config_["port"].get<int>()) + "/ui/ (" + ui_dir + ")"
+                            : "not served (build packages/ui, or pass --ui-dir=<dir>)")
+              << std::endl
               << "  tools:          " << tool_manager_.toolCount() << " registered" << std::endl;
 
     if (self_repo.empty()) {

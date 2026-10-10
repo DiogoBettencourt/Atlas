@@ -53,13 +53,16 @@ This produces the `atlas` executable in `build/`.
   --data-dir=./atlas_data/storage \
   --workspaces-dir=./atlas_data/workspaces \
   --ollama-host=127.0.0.1 \
-  --ollama-port=11434
+  --ollama-port=11434 \
+  --ui-dir=./packages/ui/dist
 ```
 
 All flags are optional and default to the values shown above. `--backend`
 selects the inference backend: `ollama` (default) or `openai` (see below).
 The `LLMBackend` interface exists so more can be added without touching the
-agent loop.
+agent loop. `--ui-dir` is the folder holding a built AtlasUI; if it exists,
+Atlas serves it at `http://<bind>:<port>/ui/` (see Clients below), and if it
+doesn't, the UI is simply not served.
 
 ### Using an OpenAI-compatible server (llama.cpp's `llama-server`, LM Studio, vLLM)
 
@@ -85,7 +88,10 @@ for `search_symbol`.
 ## API
 
 ### `GET /health`
-Liveness check. Returns `{"status": "ok"}`.
+Liveness check. Returns `{"status": "ok"}` plus what this server is running,
+so a client can show it:
+`{"status": "ok", "version": "0.8.1", "backend": "ollama", "model": "qwen3:14b"}`.
+Clients should only rely on `status`; the other fields may grow.
 
 ### `POST /chat`
 ```json
@@ -161,6 +167,21 @@ while (-not $reader.EndOfStream) {
     Write-Host $reader.ReadLine()
 }
 ```
+
+### `GET /sessions`
+Lists every persisted session, most recently updated first, so a client
+without a local registry (a browser) can show a session picker:
+```json
+{
+  "sessions": [
+    {"id": "s1", "title": "read hello.txt", "message_count": 2,
+     "updated_at": "2026-10-10T12:00:00Z"}
+  ]
+}
+```
+`title` is the session's first user message, shortened (empty if there is
+none). `message_count` counts the user and assistant turns that have text,
+not tool results. `updated_at` is when the session was last written, UTC.
 
 ### `GET /sessions/:id/history`
 Returns a session's complete, uncompacted message history exactly as
@@ -303,7 +324,9 @@ unrelated to CMake.
   styled after tools like GitHub Copilot CLI: a streaming REPL over
   `POST /chat/stream`. The first client built against this API; see its
   README for setup and current limitations.
-- **AtlasUI** - a planned React-based graphical client, not started yet.
+- **AtlasUI** - a React web client (chat with live thinking and tool calls,
+  plus a sessions sidebar). Work in progress, tracked in #55: the backend
+  side (`GET /sessions`, serving the built UI at `/ui/`) is in place.
 
 ## Notes / known limitations
 

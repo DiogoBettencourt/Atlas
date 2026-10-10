@@ -25,6 +25,8 @@ public:
     [[nodiscard]] bool exists(const std::string& key) const override;
     bool remove(const std::string& key) override;
     [[nodiscard]] std::vector<std::string> listKeys(const std::string& prefix) const override;
+    [[nodiscard]] std::optional<std::chrono::system_clock::time_point> lastModified(
+        const std::string& key) const override;
 
 private:
     [[nodiscard]] std::filesystem::path pathFor(const std::string& key) const;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
@@ -26,6 +27,14 @@ public:
 
     // Lists all keys currently stored under `prefix` (e.g. "sessions/").
     [[nodiscard]] virtual std::vector<std::string> listKeys(const std::string& prefix) const = 0;
+
+    // When `key` was last written, or std::nullopt if it doesn't exist or
+    // the backend can't tell. Not pure virtual: a backend with no notion
+    // of modification time can simply keep this default.
+    [[nodiscard]] virtual std::optional<std::chrono::system_clock::time_point> lastModified(
+        const std::string& /*key*/) const {
+        return std::nullopt;
+    }
 };
 
 } // namespace atlas::storage
