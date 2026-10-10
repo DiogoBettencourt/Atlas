@@ -23,6 +23,11 @@ public:
     APIServer(APIServer&&) = delete;
     APIServer& operator=(APIServer&&) = delete;
 
+    // Serves the static files in `directory` under /ui/ (and redirects / and
+    // /ui to it). Returns false, and serves nothing, if `directory` doesn't
+    // exist. Call before run().
+    bool serveUi(const std::string& directory);
+
     // Blocks, serving requests until stop() is called from another thread.
     void run();
 

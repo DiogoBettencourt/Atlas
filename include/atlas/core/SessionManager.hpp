@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace atlas::core {
 
@@ -22,6 +23,20 @@ namespace atlas::core {
 struct SessionSummary {
     std::size_t covers_through_index = 0;
     std::string summary;
+};
+
+// One row of the session list (GET /sessions): enough to render a sidebar
+// entry without loading every transcript on the client.
+struct SessionInfo {
+    std::string id;
+    // First user message, whitespace-collapsed and shortened; empty if the
+    // session has no user message.
+    std::string title;
+    // Messages a transcript would show: user/assistant turns with text.
+    // Tool results and empty tool-calling assistant turns aren't counted.
+    std::size_t message_count = 0;
+    // ISO 8601 UTC ("2026-10-10T12:00:00Z"), or empty if unknown.
+    std::string updated_at;
 };
 
 // Owns per-session chat history (role/content/tool-call turns) and
@@ -58,6 +73,12 @@ public:
     // Persists a new compaction checkpoint for `session_id`, replacing any
     // previous one. Does not touch the session's raw history.
     void setSummary(const std::string& session_id, const SessionSummary& summary);
+
+    // Lists every persisted session, most recently updated first. Reads
+    // straight from storage (bypassing the in-memory cache, so listing
+    // doesn't pull every transcript into memory); a session that exists
+    // only in the cache - never written - isn't listed.
+    [[nodiscard]] std::vector<SessionInfo> listSessions();
 
     // Clears a session's history and its compaction checkpoint, both in
     // memory and on disk.

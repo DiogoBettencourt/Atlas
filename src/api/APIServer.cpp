@@ -1,5 +1,6 @@
 #include "atlas/api/APIServer.hpp"
 
+#include <filesystem>
 #include <iostream>
 #include <nlohmann/json.hpp>
 
@@ -20,7 +21,7 @@ void APIServer::registerRoutes() {
     // 1. Apply CORS headers ONCE to all incoming requests globally
     server_.set_post_routing_handler([](const httplib::Request&, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
-        res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.set_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
         res.set_header("Access-Control-Allow-Headers", "Content-Type");
     });
 
@@ -31,6 +32,17 @@ void APIServer::registerRoutes() {
 
     server_.Get("/health", [](const httplib::Request&, httplib::Response& res) {
         res.set_content(nlohmann::json{{"status", "ok"}}.dump(), "application/json");
+    });
+
+    server_.Get("/sessions", [this](const httplib::Request&, httplib::Response& res) {
+        nlohmann::json sessions = nlohmann::json::array();
+        for (const auto& info : session_manager_.listSessions()) {
+            sessions.push_back({{"id", info.id},
+                                {"title", info.title},
+                                {"message_count", info.message_count},
+                                {"updated_at", info.updated_at}});
+        }
+        res.set_content(nlohmann::json{{"sessions", sessions}}.dump(), "application/json");
     });
 
     server_.Post("/chat", [this](const httplib::Request& req, httplib::Response& res) {
@@ -144,10 +156,27 @@ void APIServer::registerRoutes() {
     });
 }
 
+bool APIServer::serveUi(const std::string& directory) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(directory, ec)) {
+        return false;
+    }
+    if (!server_.set_mount_point("/ui", directory)) {
+        return false;
+    }
+    server_.Get("/", [](const httplib::Request&, httplib::Response& res) {
+        res.set_redirect("/ui/");
+    });
+    server_.Get("/ui", [](const httplib::Request&, httplib::Response& res) {
+        res.set_redirect("/ui/");
+    });
+    return true;
+}
+
 void APIServer::run() {
     std::cout << "Atlas API server listening on http://" << bind_address_ << ":" << port_
               << " (POST /chat, POST /chat/stream, GET /health, "
-                 "GET /sessions/:id/history, DELETE /sessions/:id)" << std::endl;
+                 "GET /sessions, GET /sessions/:id/history, DELETE /sessions/:id)" << std::endl;
     if (!server_.listen(bind_address_, port_)) {
         throw std::runtime_error("APIServer: failed to bind " + bind_address_ + ":" +
                                  std::to_string(port_));
