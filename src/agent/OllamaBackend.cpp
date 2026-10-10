@@ -1,7 +1,9 @@
 #include "atlas/agent/OllamaBackend.hpp"
 
+#include "CancelWatch.hpp"
 #include "StreamLines.hpp"
 
+#include <atomic>
 #include <exception>
 #include <httplib.h>
 #include <stdexcept>
@@ -49,7 +51,8 @@ nlohmann::json OllamaBackend::chat(const std::string& model,
 nlohmann::json OllamaBackend::chatStream(const std::string& model,
                                          const nlohmann::json& messages,
                                          const nlohmann::json& tools,
-                                         const DeltaCallback& on_delta) {
+                                         const DeltaCallback& on_delta,
+                                         const CancelCheck& cancelled) {
     httplib::Client client(host_, port_);
     client.set_connection_timeout(5, 0);
     // Applies between chunks, not to the whole reply, so a slow model that
@@ -74,6 +77,7 @@ nlohmann::json OllamaBackend::chatStream(const std::string& model,
     std::string thinking;
     nlohmann::json tool_calls = nlohmann::json::array();
     std::exception_ptr callback_error;
+    std::atomic<bool> was_cancelled{false};
     StreamLines lines;
 
     auto handle_line = [&](const std::string& line) {
@@ -116,6 +120,10 @@ nlohmann::json OllamaBackend::chatStream(const std::string& model,
         return true;
     };
     request.content_receiver = [&](const char* data, std::size_t length, std::uint64_t, std::uint64_t) {
+        if (cancelled && cancelled()) {
+            was_cancelled = true;
+            return false;
+        }
         if (status != 200) {
             error_body.append(data, length);
             return true;
@@ -130,8 +138,20 @@ nlohmann::json OllamaBackend::chatStream(const std::string& model,
         return true;
     };
 
+    // Closes the connection the moment Stop is pressed, even while Ollama is
+    // still reading the prompt and has sent nothing yet.
+    CancelWatch watch(cancelled, [&] {
+        was_cancelled = true;
+        client.stop();
+    });
+
     auto response = client.send(request);
 
+    if (was_cancelled) {
+        nlohmann::json partial{{"role", "assistant"}, {"content", content}};
+        if (!thinking.empty()) partial["thinking"] = thinking;
+        throw Cancelled(std::move(partial));
+    }
     if (callback_error) {
         std::rethrow_exception(callback_error);
     }

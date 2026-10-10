@@ -74,8 +74,7 @@ out is the immediate priority before building more CLI surface on top:
 ### Not started
 
 - **AtlasUI v1** (#55) - React web client, chat + sessions with CLI parity.
-  Designed and built; see `packages/ui`. Still to come after v1: a Stop
-  button (needs cancellation in the backend), a workspace picker, a
+  Designed and built; see `packages/ui`. Still to come after v1: a workspace picker, a
   desktop wrapper.
 - **Standalone binary distribution** for AtlasCLI (`pkg`/`nexe`/Node's SEA)
   so a no-Node-required install exists - currently npm-only.

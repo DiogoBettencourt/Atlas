@@ -12,10 +12,10 @@ function Spinner() {
   );
 }
 
-function ToolCard({ block }: { block: Extract<Block, { kind: "tool" }> }) {
+function ToolCard({ block, stopped }: { block: Extract<Block, { kind: "tool" }>; stopped: boolean }) {
   const args = formatArgs(block.args);
   return (
-    <div className={`tool${block.done ? "" : " tool-running"}`}>
+    <div className={`tool${block.done || stopped ? "" : " tool-running"}`}>
       <div className="tool-head">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path
@@ -34,6 +34,8 @@ function ToolCard({ block }: { block: Extract<Block, { kind: "tool" }> }) {
             </svg>
             Done
           </span>
+        ) : stopped ? (
+          <span className="tool-status">Stopped</span>
         ) : (
           <span className="tool-status tool-active">
             <Spinner />
@@ -67,7 +69,7 @@ function ThinkingText({ text, live }: { text: string; live: boolean }) {
   );
 }
 
-function BlockView({ block, running }: { block: Block; running: boolean }) {
+function BlockView({ block, running, stopped }: { block: Block; running: boolean; stopped: boolean }) {
   switch (block.kind) {
     case "thinking":
       return (
@@ -82,7 +84,7 @@ function BlockView({ block, running }: { block: Block; running: boolean }) {
     case "thought":
       return <RichText text={block.text} />;
     case "tool":
-      return <ToolCard block={block} />;
+      return <ToolCard block={block} stopped={stopped} />;
     case "text":
       return (
         <div>
@@ -110,12 +112,18 @@ function AssistantView({ turn }: { turn: AssistantTurn }) {
           block={block}
           // Only the newest thinking block stays open while the turn runs.
           running={running && i === turn.blocks.length - 1}
+          stopped={turn.status === "cancelled"}
         />
       ))}
       {waiting && (
         <div className="working" role="status">
           <Spinner />
           {turn.iteration > 0 ? `Working · step ${turn.iteration} of ${turn.maxIterations}` : "Working…"}
+        </div>
+      )}
+      {turn.status === "cancelled" && (
+        <div className="stopped" role="status">
+          Stopped
         </div>
       )}
       {turn.status === "error" && (

@@ -48,11 +48,21 @@ public:
     // "content":"<new text only>"} events, ahead of the usual "thinking" /
     // "assistant_thought" / "final" events, which still carry the complete
     // text.
+    //
+    // `cancelled`, if set, is polled (possibly from another thread, so it
+    // must be thread-safe) while the turn runs. Once it turns true the turn
+    // ends as soon as it can: an in-flight model request is dropped, the
+    // remaining tool calls of the current step are skipped, a
+    // {"type":"cancelled"} event is emitted, and chat() returns "". What the
+    // model had already said is kept in the session; the session history
+    // stays valid (every tool call has a result), so the next message
+    // simply continues the conversation.
     [[nodiscard]] std::string chat(const std::string& message,
                                     const std::string& session_id,
                                     const std::string& workspace_root = ".",
                                     const EventCallback& on_event = {},
-                                    bool stream_deltas = false);
+                                    bool stream_deltas = false,
+                                    const CancelCheck& cancelled = {});
 
     // Master switch for live text (default on; Atlas's --stream=off turns it
     // off). Live text only happens for a chat() call that also passes

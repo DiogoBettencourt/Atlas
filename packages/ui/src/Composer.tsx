@@ -3,10 +3,13 @@ import { useEffect, useRef, useState } from "react";
 interface Props {
   disabled: boolean;
   busy: boolean;
+  // A Stop has been asked for and the turn hasn't ended yet.
+  stopping: boolean;
   onSend: (text: string) => void;
+  onStop: () => void;
 }
 
-export function Composer({ disabled, busy, onSend }: Props) {
+export function Composer({ disabled, busy, stopping, onSend, onStop }: Props) {
   const [text, setText] = useState("");
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -50,22 +53,35 @@ export function Composer({ disabled, busy, onSend }: Props) {
               e.preventDefault();
               submit();
             }
+            if (e.key === "Escape" && busy && !stopping) {
+              e.preventDefault();
+              onStop();
+            }
           }}
         />
-        <button type="submit" className="send" disabled={!canSend}>
-          {busy ? (
-            "Working…"
-          ) : (
-            <>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              Send
-            </>
-          )}
-        </button>
+        {busy ? (
+          <button type="button" className="send stop" disabled={stopping} onClick={onStop}>
+            {stopping ? (
+              "Stopping…"
+            ) : (
+              <>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                  <rect x="2" y="2" width="8" height="8" rx="1.5" fill="currentColor" />
+                </svg>
+                Stop
+              </>
+            )}
+          </button>
+        ) : (
+          <button type="submit" className="send" disabled={!canSend}>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Send
+          </button>
+        )}
       </form>
-      <div className="hint">Enter to send · Shift+Enter for a new line</div>
+      <div className="hint">{busy ? "Esc to stop" : "Enter to send · Shift+Enter for a new line"}</div>
     </div>
   );
 }

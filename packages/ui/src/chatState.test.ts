@@ -195,3 +195,54 @@ describe("turnsFromHistory", () => {
     ]);
   });
 });
+
+describe("stopping a turn", () => {
+  it("a cancelled event ends the turn, keeps what was said, and stops the live markers", () => {
+    let t = newAssistantTurn("a");
+    t = applyEvent(t, { type: "thinking_delta", content: "Let me " });
+    t = applyEvent(t, { type: "thinking_delta", content: "think" });
+    t = applyEvent(t, { type: "content_delta", content: "Part of an answ" });
+    t = applyEvent(t, { type: "cancelled" });
+
+    expect(t.status).toBe("cancelled");
+    expect(t.blocks).toMatchObject([
+      { kind: "thinking", text: "Let me think", streaming: false },
+      { kind: "text", text: "Part of an answ", streaming: false },
+    ]);
+  });
+
+  it("leaves a tool that was still running unfinished (the transcript shows it as stopped)", () => {
+    let t = newAssistantTurn("a");
+    t = applyEvent(t, { type: "tool_call", name: "read_file", arguments: {} });
+    t = applyEvent(t, { type: "cancelled" });
+    expect(t.status).toBe("cancelled");
+    expect(t.blocks[0]).toMatchObject({ kind: "tool", done: false });
+  });
+});
+
+describe("turnsFromHistory thinking", () => {
+  it("restores each reply's saved reasoning ahead of what it said, numbered per iteration", () => {
+    const turns = turnsFromHistory([
+      { role: "user", content: "read it" },
+      { role: "assistant", content: "", thinking: "I should read the file.", tool_calls: [{ function: { name: "read_file", arguments: {} } }] },
+      { role: "tool", name: "read_file", content: "{}" },
+      { role: "assistant", content: "Done.", thinking: "Now answer." },
+    ]);
+    const assistant = turns[1];
+    if (assistant.role !== "assistant") throw new Error("expected an assistant turn");
+    expect(assistant.blocks.map((b) => b.kind)).toEqual(["thinking", "tool", "thinking", "text"]);
+    expect(assistant.blocks[0]).toMatchObject({ iteration: 1, text: "I should read the file." });
+    expect(assistant.blocks[2]).toMatchObject({ iteration: 2, text: "Now answer." });
+    expect(assistant.blocks[0]).not.toHaveProperty("streaming", true);
+  });
+
+  it("ignores empty or whitespace-only thinking", () => {
+    const turns = turnsFromHistory([
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "Hello", thinking: "  \n" },
+    ]);
+    const assistant = turns[1];
+    if (assistant.role !== "assistant") throw new Error("expected an assistant turn");
+    expect(assistant.blocks.map((b) => b.kind)).toEqual(["text"]);
+  });
+});

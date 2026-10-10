@@ -25,6 +25,10 @@ class FakeAtlas {
   deleted: string[] = [];
   chatBodies: Array<{ session_id: string; message: string; stream_deltas?: boolean }> = [];
   script: Step[] = [{ type: "final", reply: "ok" }];
+  cancelCalls: string[] = [];
+  cancelFindsTurn = true;
+  // Set by a cancel request; a held stream then ends with a "cancelled" event.
+  private cancelRequested = false;
   // Each "PAUSE" in a script holds the stream until the test calls release().
   private waiting: Array<() => void> = [];
 
@@ -66,7 +70,17 @@ class FakeAtlas {
       this.sessions = this.sessions.filter((s) => s.id !== del[1]);
       return this.json(res, { session_id: del[1], deleted: true });
     }
+    const cancel = url.match(/^\/sessions\/([^/]+)\/cancel$/);
+    if (cancel && req.method === "POST") {
+      this.cancelCalls.push(decodeURIComponent(cancel[1]));
+      if (this.cancelFindsTurn) {
+        this.cancelRequested = true;
+        this.waiting.shift()?.();
+      }
+      return this.json(res, { session_id: cancel[1], cancelled: this.cancelFindsTurn });
+    }
     if (url === "/chat/stream" && req.method === "POST") {
+      this.cancelRequested = false;
       let raw = "";
       for await (const chunk of req) raw += chunk;
       const body = JSON.parse(raw) as { session_id: string; message: string; stream_deltas?: boolean };
@@ -74,7 +88,12 @@ class FakeAtlas {
       res.writeHead(200, { "Content-Type": "application/x-ndjson" });
       for (const step of this.script) {
         if (step === "PAUSE") {
-          await new Promise<void>((resolve) => this.waiting.push(resolve));
+          // A cancel that already arrived doesn't wait for a release.
+          if (!this.cancelRequested) await new Promise<void>((resolve) => this.waiting.push(resolve));
+          if (this.cancelRequested) {
+            res.write(JSON.stringify({ type: "cancelled" }) + "\n");
+            return res.end();
+          }
           continue;
         }
         res.write(JSON.stringify(step) + "\n");
@@ -176,7 +195,9 @@ describe("AtlasUI", () => {
     expect(await screen.findByText("I should read the file first.")).toBeTruthy();
     expect(await screen.findByText("Running")).toBeTruthy();
     expect(screen.getByText("path: \"ROADMAP.md\"")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Working…" }).hasAttribute("disabled")).toBe(true);
+    // While a turn runs the composer offers Stop instead of Send.
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
     expect(screen.queryByText("Next up is AtlasUI.")).toBeNull();
 
     await fake.release();
@@ -210,12 +231,12 @@ describe("AtlasUI", () => {
     // The step is not over (the model is still generating) but its reasoning is already on screen.
     expect(await screen.findByText("Let me consider this.")).toBeTruthy();
     expect(screen.queryByText("Hello there")).toBeNull();
-    expect(screen.getByRole("button", { name: "Working…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 
     await fake.release();
     expect(await screen.findByText("Hello there")).toBeTruthy();
     // Still streaming: the complete answer has not arrived yet.
-    expect(screen.getByRole("button", { name: "Working…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
 
     await fake.release();
     await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeTruthy());
@@ -317,5 +338,75 @@ describe("AtlasUI", () => {
     // You can still type a draft, but Send is held back until Atlas is reachable.
     fireEvent.change(screen.getByLabelText("Message Atlas"), { target: { value: "hello?" } });
     expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("stops a running turn: the Stop button asks Atlas to cancel, then the turn ends as Stopped", async () => {
+    fake.script = [
+      { type: "iteration_start", iteration: 1, max_iterations: 20 },
+      { type: "thinking_delta", content: "Working it out" },
+      "PAUSE",
+      { type: "final", reply: "never shown" },
+    ];
+    renderApp();
+    await screen.findByText("What are we working on?");
+    await sendMessage("long question");
+
+    const stop = (await screen.findByRole("button", { name: "Stop" })) as HTMLButtonElement;
+    expect(await screen.findByText(/Working it out/)).toBeTruthy();
+    fireEvent.click(stop);
+
+    // The turn really ending (its stream closing) is what finishes the stop.
+    expect(await screen.findByText("Stopped")).toBeTruthy();
+    expect(fake.cancelCalls).toHaveLength(1);
+    expect(fake.cancelCalls[0]).toBe(fake.chatBodies[0].session_id);
+    // What had streamed in stays on screen, and the app is ready for the next message.
+    expect(screen.getByText(/Working it out/)).toBeTruthy();
+    expect(screen.queryByText("never shown")).toBeNull();
+    expect(await screen.findByRole("button", { name: "Send" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
+  });
+
+  it("Escape also stops a running turn", async () => {
+    fake.script = [{ type: "iteration_start", iteration: 1, max_iterations: 20 }, "PAUSE", { type: "final", reply: "x" }];
+    renderApp();
+    await screen.findByText("What are we working on?");
+    await sendMessage("anything");
+    await screen.findByRole("button", { name: "Stop" });
+
+    fireEvent.keyDown(screen.getByLabelText("Message Atlas"), { key: "Escape" });
+    expect(await screen.findByText("Stopped")).toBeTruthy();
+    expect(fake.cancelCalls).toHaveLength(1);
+  });
+
+  it("lets Stop be pressed again if Atlas found no running turn to stop", async () => {
+    fake.cancelFindsTurn = false;
+    fake.script = [{ type: "iteration_start", iteration: 1, max_iterations: 20 }, "PAUSE", { type: "final", reply: "finished anyway" }];
+    renderApp();
+    await screen.findByText("What are we working on?");
+    await sendMessage("anything");
+
+    const stop = (await screen.findByRole("button", { name: "Stop" })) as HTMLButtonElement;
+    fireEvent.click(stop);
+    await waitFor(() => expect(fake.cancelCalls).toHaveLength(1));
+    // Not stuck on "Stopping…": the button is available again.
+    await waitFor(() => expect((screen.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(false));
+
+    await fake.release();
+    expect(await screen.findByText("finished anyway")).toBeTruthy();
+  });
+
+  it("shows the saved thinking when an old session is reopened", async () => {
+    fake.sessions = [{ id: "s1", title: "why is the sky blue", message_count: 2, updated_at: new Date().toISOString() }];
+    fake.histories.s1 = [
+      { role: "user", content: "why is the sky blue" },
+      { role: "assistant", content: "Rayleigh scattering.", thinking: "Short wavelengths scatter more." },
+    ];
+    renderApp();
+    const nav = await screen.findByRole("navigation", { name: "Sessions" });
+    fireEvent.click(await within(nav).findByText("why is the sky blue"));
+
+    expect(await screen.findByText("Rayleigh scattering.")).toBeTruthy();
+    expect(screen.getByText("Short wavelengths scatter more.")).toBeTruthy();
+    expect(screen.getByText(/^Thinking/)).toBeTruthy();
   });
 });

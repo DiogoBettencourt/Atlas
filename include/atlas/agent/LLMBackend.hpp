@@ -2,9 +2,31 @@
 
 #include <functional>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace atlas::agent {
+
+// Asked repeatedly while a request is in flight; returns true once the caller
+// wants the request abandoned (the user pressed Stop, or the client went
+// away). May be called from a different thread than the one that made the
+// request, so it must be thread-safe (reading an std::atomic<bool> is).
+using CancelCheck = std::function<bool()>;
+
+// Thrown by chatStream() when its CancelCheck turned true and the request
+// was abandoned. Carries whatever the model had produced by then, in the
+// same shape chatStream() returns (role/content/thinking, never tool calls),
+// so the caller can keep what the user already saw.
+class Cancelled : public std::runtime_error {
+public:
+    explicit Cancelled(nlohmann::json partial)
+        : std::runtime_error("request cancelled"), partial_(std::move(partial)) {}
+    [[nodiscard]] const nlohmann::json& partial() const { return partial_; }
+
+private:
+    nlohmann::json partial_;
+};
 
 // Abstract chat-completion backend: the single seam between Agent and
 // whatever actually runs the model (Ollama today; an OpenAI-compatible
@@ -49,14 +71,19 @@ public:
     // whole generation. The returned message is the complete one, exactly
     // what chat() would have returned.
     //
+    // If `cancelled` is set and turns true, the backend drops the connection
+    // (so the server stops generating) and throws Cancelled.
+    //
     // The default implementation just calls chat() and never calls
-    // `on_delta`, so a backend that can't stream still works.
+    // `on_delta` or checks `cancelled`, so a backend that can't stream still works.
     [[nodiscard]] virtual nlohmann::json chatStream(
         const std::string& model,
         const nlohmann::json& messages,
         const nlohmann::json& tools,
-        const DeltaCallback& on_delta) {
+        const DeltaCallback& on_delta,
+        const CancelCheck& cancelled = {}) {
         (void)on_delta;
+        (void)cancelled;
         return chat(model, messages, tools);
     }
 

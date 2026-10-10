@@ -32,6 +32,7 @@ export default function App({ client: injected }: { client?: AtlasClient }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -103,6 +104,7 @@ export default function App({ client: injected }: { client?: AtlasClient }) {
       const assistantId = `a${stamp}`;
       const sessionId = activeId;
       setNotice(null);
+      setStopping(false);
       setBusy(true);
       setTurns((t) => [...t, { id: `u${stamp}`, role: "user", text }, newAssistantTurn(assistantId)]);
 
@@ -120,11 +122,29 @@ export default function App({ client: injected }: { client?: AtlasClient }) {
         void checkHealth();
       } finally {
         setBusy(false);
+        setStopping(false);
         void refreshSessions();
       }
     },
     [activeId, client, checkHealth, refreshSessions]
   );
+
+  // Asks Atlas to stop the running turn. The turn's own stream ends with a
+  // "cancelled" event once it really has; until then the composer says
+  // "Stopping…" and stays locked, so a new message can't land in a session
+  // that is still busy.
+  const stop = useCallback(async () => {
+    setStopping(true);
+    try {
+      const found = await client.cancel(activeId);
+      // No running turn on the server: it already finished, or hasn't
+      // started yet. Let the button be pressed again.
+      if (!found) setStopping(false);
+    } catch (err) {
+      setStopping(false);
+      setNotice(`Couldn't stop that: ${errorText(err)}`);
+    }
+  }, [activeId, client]);
 
   const startNew = useCallback(() => {
     setActiveId(newSessionId());
@@ -222,7 +242,7 @@ export default function App({ client: injected }: { client?: AtlasClient }) {
           <Transcript turns={turns} />
         )}
 
-        <Composer disabled={loadingHistory || online === false} busy={busy} onSend={(t) => void send(t)} />
+        <Composer disabled={loadingHistory || online === false} busy={busy} stopping={stopping} onSend={(t) => void send(t)} onStop={() => void stop()} />
       </main>
 
       {pendingDelete && (

@@ -555,3 +555,57 @@ describe("AtlasClient streamDeltas", () => {
     expect(await bodyFor({ sessionId: "s", message: "m" })).not.toHaveProperty("stream_deltas");
   });
 });
+
+describe("AtlasClient.cancel", () => {
+  it("POSTs to /sessions/:id/cancel and reports whether a turn was running", async () => {
+    const seen: Array<{ method?: string; url?: string; type?: string | string[]; body: string }> = [];
+    let found = true;
+    await withServer(
+      async (req, res) => {
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        seen.push({ method: req.method, url: req.url, type: req.headers["content-type"], body });
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ session_id: "a b", cancelled: found }));
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(client.cancel("a b")).resolves.toBe(true);
+        found = false;
+        await expect(client.cancel("a b")).resolves.toBe(false);
+      }
+    );
+    expect(seen[0]).toMatchObject({ method: "POST", url: "/sessions/a%20b/cancel", type: "application/json", body: "{}" });
+  });
+
+  it("throws AtlasConnectError when the server can't be reached and AtlasApiError on a bad status", async () => {
+    await expect(new AtlasClient({ baseUrl: "http://127.0.0.1:1" }).cancel("s")).rejects.toBeInstanceOf(AtlasConnectError);
+    await withServer(
+      (_req, res) => {
+        res.writeHead(500);
+        res.end();
+      },
+      async (baseUrl) => {
+        await expect(new AtlasClient({ baseUrl }).cancel("s")).rejects.toBeInstanceOf(AtlasApiError);
+      }
+    );
+  });
+});
+
+describe("AtlasClient.chatStream with a stopped turn", () => {
+  it("resolves (with no reply) when the stream ends with a cancelled event instead of final", async () => {
+    const events: AgentEvent[] = [];
+    await withServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+        res.write(JSON.stringify({ type: "iteration_start", iteration: 1, max_iterations: 20 }) + "\n");
+        res.end(JSON.stringify({ type: "cancelled" }) + "\n");
+      },
+      async (baseUrl) => {
+        const reply = await new AtlasClient({ baseUrl }).chatStream({ sessionId: "s", message: "hi" }, (e) => events.push(e));
+        expect(reply).toBe("");
+      }
+    );
+    expect(events.map((e) => e.type)).toEqual(["iteration_start", "cancelled"]);
+  });
+});
