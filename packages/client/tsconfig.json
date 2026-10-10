@@ -1,7 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "noEmit": true,
@@ -11,7 +14,13 @@
     "skipLibCheck": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "e2e",
+    "vitest.e2e.config.ts"
+  ]
 }

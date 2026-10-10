@@ -40,3 +40,23 @@ npm test
 
 The tests run the client against a real `node:http` server (not a mocked
 `fetch`), since parsing bytes off a chunked response is the point.
+
+### End-to-end tests (#22)
+
+`e2e/` starts the **real `atlas` binary** against a small stub Ollama
+(`e2e/stub-ollama.ts`) and drives it with this client over real HTTP: health,
+plain and streaming chat (with and without live text), a tool call that really
+runs, sessions (list, history with saved thinking, delete), stopping a running
+turn (and that Atlas drops the model connection), the 409 for a second turn,
+the hosted UI and the CORS preflight. They catch what neither the C++ tests
+nor the client tests can see alone.
+
+```
+# from the repo root: build atlas first (cmake --build build --config Release)
+cd packages/client
+ATLAS_BIN=../../build/atlas npm run test:e2e              # Linux / macOS
+$env:ATLAS_BIN="..\..\build\Release\atlas.exe"; npm run test:e2e   # PowerShell
+```
+
+`npm test` skips them (it needs no binary). CI runs them after the backend build
+on Ubuntu.
