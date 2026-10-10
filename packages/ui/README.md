@@ -63,7 +63,9 @@ so no proxy is needed.
 
 - **Stop is cooperative.** It stops the model right away and skips any tool
   calls that hadn't started, but a tool that is already running (a slow search,
-  say) finishes first, so "Stopping…" can last a moment.
+  say) finishes first, so "Stopping…" can last a moment. On Windows, pressing it
+  before the model has produced anything at all (it is still reading a long
+  prompt) takes effect when its first output arrives.
 - A turn's partial answer is kept when you stop it, but its partial thinking is
   only kept if the model had also started answering.
 - Assistant text supports code blocks and `inline code` only, not full Markdown.

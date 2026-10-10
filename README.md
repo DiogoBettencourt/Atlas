@@ -240,6 +240,11 @@ turn's own stream then ends with a `{"type":"cancelled"}` event in place of
 tool call it asked for has a result, so the next message simply continues the
 conversation.
 
+One limitation on Windows: if Stop is pressed while the model is still reading
+the prompt and hasn't produced anything yet, the turn ends when its first output
+arrives (Windows doesn't let one thread interrupt another's blocked read). Once
+the model is generating, Stop is immediate on every platform.
+
 Only one turn can run per session at a time: a second `POST /chat/stream` for
 a session that is still busy gets `409`. If the client simply disconnects
 (closes the tab), the turn is stopped the same way.
