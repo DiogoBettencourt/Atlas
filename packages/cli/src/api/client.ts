@@ -44,6 +44,26 @@ export interface RawSessionMessage {
   name?: string;
 }
 
+// One row of GET /sessions - what a session picker needs to render an entry.
+export interface SessionSummary {
+  id: string;
+  // The session's first user message, shortened by the server. Empty when
+  // the session has no user message.
+  title: string;
+  messageCount: number;
+  // ISO 8601 UTC timestamp of the last write; empty if the server couldn't tell.
+  updatedAt: string;
+}
+
+// What GET /health says about the server it is talking to. Only `status`
+// is a stable contract; everything here is informational and any of it can
+// be missing (older servers send just {"status":"ok"}).
+export interface ServerInfo {
+  version?: string;
+  backend?: string;
+  model?: string;
+}
+
 export class AtlasApiError extends Error {
   constructor(message: string, readonly cause?: unknown) {
     super(message);
@@ -118,6 +138,42 @@ export class AtlasClient {
     }
   }
 
+  // GET /sessions - every session the server has persisted, most recently
+  // updated first. Unlike getHistory() this throws on failure: a caller
+  // rendering a session list wants to say "couldn't load sessions" rather
+  // than show an empty list that looks like a fresh install. Servers older
+  // than the /sessions endpoint answer 404, which surfaces as an
+  // AtlasApiError too.
+  async listSessions(): Promise<SessionSummary[]> {
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}/sessions`);
+    } catch (err) {
+      throw new AtlasConnectError(
+        `couldn't reach Atlas server at ${this.baseUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        err
+      );
+    }
+    if (!res.ok) {
+      throw new AtlasApiError(`Atlas server returned HTTP ${res.status} listing sessions`);
+    }
+    const body = (await res.json().catch(() => undefined)) as
+      | { sessions?: Array<{ id?: unknown; title?: unknown; message_count?: unknown; updated_at?: unknown }> }
+      | undefined;
+    const rows = Array.isArray(body?.sessions) ? body.sessions : [];
+    const sessions: SessionSummary[] = [];
+    for (const row of rows) {
+      if (typeof row.id !== "string") continue;
+      sessions.push({
+        id: row.id,
+        title: typeof row.title === "string" ? row.title : "",
+        messageCount: typeof row.message_count === "number" ? row.message_count : 0,
+        updatedAt: typeof row.updated_at === "string" ? row.updated_at : "",
+      });
+    }
+    return sessions;
+  }
+
   // DELETE /sessions/:id - permanently removes a session's history and
   // compaction summary, both server-side (SessionManager::resetSession)
   // and, by the caller, from the local picker registry (see
@@ -155,6 +211,25 @@ export class AtlasClient {
       return body.status === "ok";
     } catch {
       return false;
+    }
+  }
+
+  // Like health(), but also returns what the server reports about itself.
+  // Resolves to null when the server is unreachable or not ok - never
+  // throws - and to an object (possibly empty) when it is up.
+  async info(): Promise<ServerInfo | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/health`);
+      if (!res.ok) return null;
+      const body = (await res.json()) as { status?: string; version?: unknown; backend?: unknown; model?: unknown };
+      if (body.status !== "ok") return null;
+      const info: ServerInfo = {};
+      if (typeof body.version === "string") info.version = body.version;
+      if (typeof body.backend === "string") info.backend = body.backend;
+      if (typeof body.model === "string") info.model = body.model;
+      return info;
+    } catch {
+      return null;
     }
   }
 
