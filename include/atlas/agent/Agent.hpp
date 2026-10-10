@@ -41,10 +41,24 @@ public:
     // natural-language reply. If `on_event` is set, it's called for every
     // tool call issued and every tool result received, in order, before
     // this function returns the final reply.
+    //
+    // With `stream_deltas` (and `on_event` set, and streaming not switched
+    // off) the backend is asked to stream, and the model's text is also
+    // reported as it is generated: {"type":"thinking_delta"|"content_delta",
+    // "content":"<new text only>"} events, ahead of the usual "thinking" /
+    // "assistant_thought" / "final" events, which still carry the complete
+    // text.
     [[nodiscard]] std::string chat(const std::string& message,
                                     const std::string& session_id,
                                     const std::string& workspace_root = ".",
-                                    const EventCallback& on_event = {});
+                                    const EventCallback& on_event = {},
+                                    bool stream_deltas = false);
+
+    // Master switch for live text (default on; Atlas's --stream=off turns it
+    // off). Live text only happens for a chat() call that also passes
+    // `stream_deltas = true`, so existing callers see exactly the events
+    // they always did.
+    void setStreaming(bool enabled) { streaming_ = enabled; }
 
     void setMaxIterations(unsigned int max_iterations) { max_iterations_ = max_iterations; }
 
@@ -155,6 +169,7 @@ private:
     core::SessionManager& session_manager_;
     std::string model_name_;
     unsigned int max_iterations_ = 20;
+    bool streaming_ = true;
     std::size_t max_history_messages_ = 40;
 };
 

@@ -23,16 +23,16 @@ class FakeAtlas {
   sessions: Row[] = [];
   histories: Record<string, unknown[]> = {};
   deleted: string[] = [];
-  chatBodies: Array<{ session_id: string; message: string }> = [];
+  chatBodies: Array<{ session_id: string; message: string; stream_deltas?: boolean }> = [];
   script: Step[] = [{ type: "final", reply: "ok" }];
-  private resume!: () => void;
-  private gate: Promise<void> = Promise.resolve();
+  // Each "PAUSE" in a script holds the stream until the test calls release().
+  private waiting: Array<() => void> = [];
 
-  pause() {
-    this.gate = new Promise<void>((resolve) => (this.resume = resolve));
-  }
-  release() {
-    this.resume();
+  async release() {
+    for (let i = 0; i < 200 && this.waiting.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    this.waiting.shift()?.();
   }
 
   async start() {
@@ -69,12 +69,12 @@ class FakeAtlas {
     if (url === "/chat/stream" && req.method === "POST") {
       let raw = "";
       for await (const chunk of req) raw += chunk;
-      const body = JSON.parse(raw) as { session_id: string; message: string };
+      const body = JSON.parse(raw) as { session_id: string; message: string; stream_deltas?: boolean };
       this.chatBodies.push(body);
       res.writeHead(200, { "Content-Type": "application/x-ndjson" });
       for (const step of this.script) {
         if (step === "PAUSE") {
-          await this.gate;
+          await new Promise<void>((resolve) => this.waiting.push(resolve));
           continue;
         }
         res.write(JSON.stringify(step) + "\n");
@@ -167,7 +167,6 @@ describe("AtlasUI", () => {
       { type: "iteration_start", iteration: 2, max_iterations: 20 },
       { type: "final", reply: "Next up is AtlasUI." },
     ];
-    fake.pause();
     renderApp();
     await screen.findByText("What are we working on?");
 
@@ -180,7 +179,7 @@ describe("AtlasUI", () => {
     expect(screen.getByRole("button", { name: "Working…" }).hasAttribute("disabled")).toBe(true);
     expect(screen.queryByText("Next up is AtlasUI.")).toBeNull();
 
-    fake.release();
+    await fake.release();
     expect(await screen.findByText("Next up is AtlasUI.")).toBeTruthy();
     expect(screen.getByText("Done")).toBeTruthy();
     expect(screen.queryByText("Running")).toBeNull();
@@ -191,6 +190,39 @@ describe("AtlasUI", () => {
     const nav = screen.getByRole("navigation", { name: "Sessions" });
     expect(await within(nav).findByText("what is next?")).toBeTruthy();
     await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeTruthy());
+  });
+
+  it("shows thinking and the reply as they are generated, before the step finishes", async () => {
+    fake.script = [
+      { type: "iteration_start", iteration: 1, max_iterations: 20 },
+      { type: "thinking_delta", content: "Let me " },
+      { type: "thinking_delta", content: "consider this." },
+      "PAUSE",
+      { type: "content_delta", content: "Hel" },
+      { type: "content_delta", content: "lo there" },
+      "PAUSE",
+      { type: "thinking", content: "Let me consider this." },
+      { type: "final", reply: "Hello there" },
+    ];
+    renderApp();
+    await sendMessage("hi");
+
+    // The step is not over (the model is still generating) but its reasoning is already on screen.
+    expect(await screen.findByText("Let me consider this.")).toBeTruthy();
+    expect(screen.queryByText("Hello there")).toBeNull();
+    expect(screen.getByRole("button", { name: "Working…" })).toBeTruthy();
+
+    await fake.release();
+    expect(await screen.findByText("Hello there")).toBeTruthy();
+    // Still streaming: the complete answer has not arrived yet.
+    expect(screen.getByRole("button", { name: "Working…" })).toBeTruthy();
+
+    await fake.release();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send" })).toBeTruthy());
+    // One thinking block and one reply block, not duplicates of each.
+    expect(screen.getAllByText("Let me consider this.")).toHaveLength(1);
+    expect(screen.getAllByText("Hello there")).toHaveLength(1);
+    expect(fake.chatBodies[0].stream_deltas).toBe(true);
   });
 
   it("does not send on Shift+Enter, and ignores an empty message", async () => {

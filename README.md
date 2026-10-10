@@ -60,7 +60,8 @@ This produces the `atlas` executable in `build/`.
 All flags are optional and default to the values shown above. `--backend`
 selects the inference backend: `ollama` (default) or `openai` (see below).
 The `LLMBackend` interface exists so more can be added without touching the
-agent loop. `--ui-dir` is the folder holding a built AtlasUI; if it exists,
+agent loop. `--stream=off` turns live text streaming off (see `stream_deltas`
+under `POST /chat/stream`). `--ui-dir` is the folder holding a built AtlasUI; if it exists,
 Atlas serves it at `http://<bind>:<port>/ui/` (see Clients below), and if it
 doesn't, the UI is simply not served.
 
@@ -142,6 +143,28 @@ written to the connection as the agent produces it, ending in a `final` or
 {"type":"iteration_start","iteration":2,"max_iterations":20}
 {"type":"final","reply":"Done — the file says hello."}
 ```
+
+#### Live text (`stream_deltas`)
+By default each event arrives whole: the model's thinking shows up only once
+it has finished generating, and so does its reply. Add `"stream_deltas": true`
+to the request body and Atlas also streams the text *as it is generated*, with
+two extra event types carrying just the new piece:
+
+```
+{"type":"iteration_start","iteration":1,"max_iterations":20}
+{"type":"thinking_delta","content":"The user "}
+{"type":"thinking_delta","content":"wants a summary. "}
+{"type":"content_delta","content":"Here is "}
+{"type":"content_delta","content":"the summary."}
+{"type":"thinking","content":"The user wants a summary. "}
+{"type":"final","reply":"Here is the summary."}
+```
+The usual `thinking`, `assistant_thought` and `final` events still follow and
+carry the complete text, so a client can ignore the deltas or use them only to
+show progress. Clients that don't ask for deltas see exactly the events they
+always did. Both backends stream (Ollama's NDJSON and the OpenAI-style SSE
+used by `llama-server`). If a server misbehaves when streamed, start Atlas with
+`--stream=off`.
 
 **This only shows up live if your client reads the body incrementally.**
 `Invoke-RestMethod` in PowerShell buffers the whole response before

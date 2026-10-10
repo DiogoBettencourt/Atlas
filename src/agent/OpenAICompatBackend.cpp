@@ -1,8 +1,12 @@
 #include "atlas/agent/OpenAICompatBackend.hpp"
 
+#include "StreamLines.hpp"
+
 #include <httplib.h>
 
 #include <deque>
+#include <exception>
+#include <map>
 #include <stdexcept>
 
 namespace atlas::agent {
@@ -41,6 +45,85 @@ void extractInlineThinking(std::string& content, std::string& thinking) {
     std::size_t b = thinking.find_last_not_of(" \t\r\n");
     thinking = a == std::string::npos ? std::string{} : thinking.substr(a, b - a + 1);
 }
+
+// Routes a streamed reply's text to "thinking" or "content" as it arrives.
+// Servers that parse reasoning themselves send it in its own field and never
+// need this; for the ones that leave the model's raw `<think>...</think>`
+// inline at the start of the content, this finds that block live (the same
+// thing extractInlineThinking does on a finished reply).
+class ThinkSplitter {
+public:
+    using Emit = std::function<void(const char* kind, const std::string& text)>;
+
+    // The server sent reasoning separately, so there is no inline block to look for.
+    void markNoInline(const Emit& emit) {
+        if (state_ == State::Done) return;
+        state_ = State::Done;
+        if (!pending_.empty()) {
+            emit("content", pending_);
+            pending_.clear();
+        }
+    }
+
+    void feed(const std::string& piece, const Emit& emit) {
+        if (piece.empty()) return;
+        if (state_ == State::Done) {
+            emit("content", piece);
+            return;
+        }
+        pending_ += piece;
+
+        if (state_ == State::Start) {
+            const std::size_t first = pending_.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos) return; // only whitespace so far
+            const std::string head = pending_.substr(first);
+            if (head.size() < kOpen.size() && kOpen.compare(0, head.size(), head) == 0) {
+                return; // could still turn into "<think>"
+            }
+            if (head.compare(0, kOpen.size(), kOpen) != 0) {
+                state_ = State::Done;
+                emit("content", pending_);
+                pending_.clear();
+                return;
+            }
+            state_ = State::InThink;
+            pending_ = head.substr(kOpen.size());
+        }
+
+        // InThink
+        const std::size_t close = pending_.find(kClose);
+        if (close != std::string::npos) {
+            if (close > 0) emit("thinking", pending_.substr(0, close));
+            std::string rest = pending_.substr(close + kClose.size());
+            const std::size_t keep = rest.find_first_not_of(" \t\r\n");
+            rest = keep == std::string::npos ? std::string{} : rest.substr(keep);
+            state_ = State::Done;
+            pending_.clear();
+            if (!rest.empty()) emit("content", rest);
+            return;
+        }
+        // Hold back a possible partial "</think>" at the end.
+        const std::size_t hold = kClose.size() - 1;
+        if (pending_.size() > hold) {
+            emit("thinking", pending_.substr(0, pending_.size() - hold));
+            pending_.erase(0, pending_.size() - hold);
+        }
+    }
+
+    // The stream ended: release whatever is still held back.
+    void finish(const Emit& emit) {
+        if (pending_.empty()) return;
+        emit(state_ == State::InThink ? "thinking" : "content", pending_);
+        pending_.clear();
+    }
+
+private:
+    enum class State { Start, InThink, Done };
+    inline static const std::string kOpen = "<think>";
+    inline static const std::string kClose = "</think>";
+    State state_ = State::Start;
+    std::string pending_;
+};
 
 std::string stringOr(const json& obj, const char* key) {
     if (obj.is_object() && obj.contains(key) && obj[key].is_string()) {
@@ -207,6 +290,161 @@ json OpenAICompatBackend::chat(const std::string& model, const json& messages, c
     }
 
     return fromWireMessage(parsed["choices"][0]["message"]);
+}
+
+json OpenAICompatBackend::chatStream(const std::string& model, const json& messages, const json& tools,
+                                     const DeltaCallback& on_delta) {
+    httplib::Client client(origin_);
+    if (!client.is_valid()) {
+        throw std::runtime_error(std::string(kErrPrefix) + "cannot create a client for '" + api_base_ +
+                                 "' (https:// needs a build with OpenSSL)");
+    }
+    client.set_connection_timeout(5, 0);
+    client.set_read_timeout(300, 0); // between chunks, not for the whole reply
+
+    json payload{{"model", model}, {"messages", toWireMessages(messages)}, {"stream", true}};
+    if (!tools.empty()) payload["tools"] = tools;
+
+    httplib::Request request;
+    request.method = "POST";
+    request.path = endpoint_;
+    request.set_header("Content-Type", "application/json");
+    if (!api_key_.empty()) request.set_header("Authorization", "Bearer " + api_key_);
+    request.body = payload.dump();
+
+    struct ToolAccumulator {
+        std::string id;
+        std::string name;
+        std::string arguments;
+    };
+
+    int status = 0;
+    std::string error_body;
+    std::string stream_error;
+    std::string content;   // raw, exactly as the server sent it
+    std::string reasoning;
+    std::map<int, ToolAccumulator> tool_parts;
+    std::exception_ptr callback_error;
+    ThinkSplitter splitter;
+    StreamLines lines;
+
+    const ThinkSplitter::Emit emit_delta = [&on_delta](const char* kind, const std::string& text) {
+        if (on_delta) on_delta(kind, text);
+    };
+
+    auto handle_line = [&](const std::string& line) {
+        if (line.rfind("data:", 0) != 0) return; // SSE comments, "event:" lines, etc.
+        std::string data = line.substr(5);
+        const std::size_t first = data.find_first_not_of(' ');
+        data = first == std::string::npos ? std::string{} : data.substr(first);
+        if (data.empty() || data == "[DONE]") return;
+
+        json chunk = json::parse(data, nullptr, false);
+        if (chunk.is_discarded() || !chunk.is_object()) return;
+        if (chunk.contains("error")) {
+            stream_error = chunk["error"].is_string()
+                               ? chunk["error"].get<std::string>()
+                               : (chunk["error"].is_object() ? stringOr(chunk["error"], "message") : "");
+            if (stream_error.empty()) stream_error = chunk["error"].dump();
+            return;
+        }
+        if (!chunk.contains("choices") || !chunk["choices"].is_array() || chunk["choices"].empty()) return;
+        const json& choice = chunk["choices"][0];
+        if (!choice.is_object() || !choice.contains("delta") || !choice["delta"].is_object()) return;
+        const json& delta = choice["delta"];
+
+        std::string reasoning_piece = stringOr(delta, "reasoning_content");
+        if (reasoning_piece.empty()) reasoning_piece = stringOr(delta, "reasoning");
+        if (!reasoning_piece.empty()) {
+            reasoning += reasoning_piece;
+            splitter.markNoInline(emit_delta);
+            if (on_delta) on_delta("thinking", reasoning_piece);
+        }
+
+        const std::string content_piece = stringOr(delta, "content");
+        if (!content_piece.empty()) {
+            content += content_piece;
+            splitter.feed(content_piece, emit_delta);
+        }
+
+        if (delta.contains("tool_calls") && delta["tool_calls"].is_array()) {
+            int position = 0;
+            for (const auto& call : delta["tool_calls"]) {
+                const int index = call.contains("index") && call["index"].is_number_integer()
+                                      ? call["index"].get<int>()
+                                      : position;
+                ++position;
+                ToolAccumulator& acc = tool_parts[index];
+                const std::string id = stringOr(call, "id");
+                if (acc.id.empty() && !id.empty()) acc.id = id;
+                if (call.contains("function") && call["function"].is_object()) {
+                    const json& fn = call["function"];
+                    // The name arrives whole (some servers repeat it on every
+                    // chunk), the arguments arrive as string fragments.
+                    if (acc.name.empty()) acc.name = stringOr(fn, "name");
+                    acc.arguments += stringOr(fn, "arguments");
+                }
+            }
+        }
+    };
+
+    request.response_handler = [&status](const httplib::Response& response) {
+        status = response.status;
+        return true;
+    };
+    request.content_receiver = [&](const char* data, std::size_t length, std::uint64_t, std::uint64_t) {
+        if (status != 200) {
+            error_body.append(data, length);
+            return true;
+        }
+        try {
+            lines.feed(data, length, handle_line);
+        } catch (...) {
+            callback_error = std::current_exception();
+            return false;
+        }
+        return true;
+    };
+
+    auto response = client.send(request);
+
+    if (callback_error) std::rethrow_exception(callback_error);
+    if (!response && status == 0) {
+        throw std::runtime_error(std::string(kErrPrefix) + "failed to reach " + api_base_ +
+                                 " - is the server running? (e.g. `llama-server -m model.gguf --port 8081`)");
+    }
+    if (status == 401 || status == 403) {
+        throw std::runtime_error(std::string(kErrPrefix) + "server returned HTTP " + std::to_string(status) +
+                                 " - check the API key (set ATLAS_API_KEY or pass --api-key)");
+    }
+    if (status != 200) {
+        throw std::runtime_error(std::string(kErrPrefix) + "server returned HTTP " + std::to_string(status) +
+                                 ": " + error_body);
+    }
+    if (!response) {
+        throw std::runtime_error(std::string(kErrPrefix) + "connection to the server was lost mid-reply");
+    }
+    lines.flush(handle_line);
+    splitter.finish(emit_delta);
+    if (!stream_error.empty()) {
+        throw std::runtime_error(std::string(kErrPrefix) + "server reported an error: " + stream_error);
+    }
+
+    // Reassemble the streamed pieces into the same wire message a
+    // non-streaming reply would have carried, and translate it the same way.
+    json wire{{"role", "assistant"}, {"content", content}};
+    if (!reasoning.empty()) wire["reasoning_content"] = reasoning;
+    if (!tool_parts.empty()) {
+        json calls = json::array();
+        for (const auto& [index, acc] : tool_parts) {
+            (void)index;
+            json call{{"type", "function"}, {"function", {{"name", acc.name}, {"arguments", acc.arguments}}}};
+            if (!acc.id.empty()) call["id"] = acc.id;
+            calls.push_back(std::move(call));
+        }
+        wire["tool_calls"] = std::move(calls);
+    }
+    return fromWireMessage(wire);
 }
 
 } // namespace atlas::agent

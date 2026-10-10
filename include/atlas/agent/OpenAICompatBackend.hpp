@@ -41,6 +41,12 @@ public:
         const nlohmann::json& messages,
         const nlohmann::json& tools = nlohmann::json::array()) override;
 
+    [[nodiscard]] nlohmann::json chatStream(
+        const std::string& model,
+        const nlohmann::json& messages,
+        const nlohmann::json& tools,
+        const DeltaCallback& on_delta) override;
+
     [[nodiscard]] std::string name() const override { return "openai"; }
 
     // Atlas history -> wire messages. Stringifies tool-call arguments,

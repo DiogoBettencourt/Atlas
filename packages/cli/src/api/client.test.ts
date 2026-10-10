@@ -526,3 +526,32 @@ describe("AtlasClient.info", () => {
     );
   });
 });
+
+describe("AtlasClient streamDeltas", () => {
+  async function bodyFor(request: { sessionId: string; message: string; streamDeltas?: boolean }): Promise<unknown> {
+    let seen: unknown;
+    await withServer(
+      (req, res) => {
+        let raw = "";
+        req.on("data", (chunk) => (raw += chunk));
+        req.on("end", () => {
+          seen = JSON.parse(raw);
+          res.writeHead(200, { "Content-Type": "application/x-ndjson" });
+          res.write(JSON.stringify({ type: "thinking_delta", content: "hm" }) + "\n");
+          res.end(JSON.stringify({ type: "final", reply: "ok" }) + "\n");
+        });
+      },
+      async (baseUrl) => {
+        const events: AgentEvent[] = [];
+        await new AtlasClient({ baseUrl }).chatStream(request, (e) => events.push(e));
+        expect(events.map((e) => e.type)).toEqual(["thinking_delta", "final"]);
+      }
+    );
+    return seen;
+  }
+
+  it("sends stream_deltas only when asked, and passes delta events through", async () => {
+    expect(await bodyFor({ sessionId: "s", message: "m", streamDeltas: true })).toMatchObject({ stream_deltas: true });
+    expect(await bodyFor({ sessionId: "s", message: "m" })).not.toHaveProperty("stream_deltas");
+  });
+});

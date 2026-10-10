@@ -51,16 +51,32 @@ function ToolCard({ block }: { block: Extract<Block, { kind: "tool" }> }) {
   );
 }
 
+// The reasoning text. While it streams it follows its own tail, like the
+// page does, so the newest words are always the ones in view.
+function ThinkingText({ text, live }: { text: string; live: boolean }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (live && el) el.scrollTop = el.scrollHeight;
+  }, [text, live]);
+  return (
+    <p ref={ref}>
+      {text}
+      {live && <span className="caret" aria-hidden="true" />}
+    </p>
+  );
+}
+
 function BlockView({ block, running }: { block: Block; running: boolean }) {
   switch (block.kind) {
     case "thinking":
       return (
-        <details className="thinking" open={running}>
+        <details className="thinking" open={running || block.streaming === true}>
           <summary>
-            <span className="dot" />
+            <span className={`dot${block.streaming ? " dot-live" : ""}`} />
             Thinking{block.iteration > 0 ? ` · iteration ${block.iteration}` : ""}
           </summary>
-          <p>{block.text}</p>
+          <ThinkingText text={block.text} live={block.streaming === true} />
         </details>
       );
     case "thought":
@@ -68,7 +84,12 @@ function BlockView({ block, running }: { block: Block; running: boolean }) {
     case "tool":
       return <ToolCard block={block} />;
     case "text":
-      return <RichText text={block.text} />;
+      return (
+        <div>
+          <RichText text={block.text} />
+          {block.streaming && <span className="caret" aria-hidden="true" />}
+        </div>
+      );
   }
 }
 
@@ -77,7 +98,10 @@ function AssistantView({ turn }: { turn: AssistantTurn }) {
   const lastBlock = turn.blocks[turn.blocks.length - 1];
   // Between events the agent is busy (the model is generating); show that
   // rather than a frozen-looking screen.
-  const waiting = running && !(lastBlock?.kind === "tool" && !lastBlock.done);
+  const live = (lastBlock?.kind === "thinking" || lastBlock?.kind === "text") && lastBlock.streaming === true;
+  // Nothing is moving on screen: a tool is running (it has its own spinner),
+  // or text is already streaming in.
+  const waiting = running && !live && !(lastBlock?.kind === "tool" && !lastBlock.done);
   return (
     <div className="assistant" data-testid="assistant-turn">
       {turn.blocks.map((block, i) => (

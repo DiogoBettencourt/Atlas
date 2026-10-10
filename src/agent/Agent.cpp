@@ -209,7 +209,8 @@ std::vector<std::pair<std::size_t, std::size_t>> Agent::computeCompactionChunks(
 std::string Agent::chat(const std::string& message,
                          const std::string& session_id,
                          const std::string& workspace_root,
-                         const EventCallback& on_event) {
+                         const EventCallback& on_event,
+                         bool stream_deltas) {
     auto emit = [&on_event](const nlohmann::json& event) {
         if (on_event) on_event(event);
     };
@@ -305,7 +306,18 @@ std::string Agent::chat(const std::string& message,
 
         nlohmann::json assistant_message;
         try {
-            assistant_message = llm_backend_.chat(model_name_, history, tool_manager_.schemasJson());
+            if (streaming_ && stream_deltas && on_event) {
+                // Report the model's text live as it is generated. The
+                // complete text still arrives in the events below.
+                assistant_message = llm_backend_.chatStream(
+                    model_name_, history, tool_manager_.schemasJson(),
+                    [&emit](const std::string& kind, const std::string& text) {
+                        emit({{"type", kind == "thinking" ? "thinking_delta" : "content_delta"},
+                              {"content", text}});
+                    });
+            } else {
+                assistant_message = llm_backend_.chat(model_name_, history, tool_manager_.schemasJson());
+            }
         } catch (const std::exception& e) {
             std::string error_msg = std::string("Agent error: ") + e.what();
             emit({{"type", "error"}, {"message", error_msg}});

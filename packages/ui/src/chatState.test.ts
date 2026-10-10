@@ -55,6 +55,89 @@ describe("applyEvent", () => {
   });
 });
 
+describe("applyEvent with live deltas", () => {
+  it("grows one thinking block from thinking_delta events, then replaces it with the complete text", () => {
+    let t = applyEvent(newAssistantTurn("a"), { type: "iteration_start", iteration: 1, max_iterations: 20 });
+    t = applyEvent(t, { type: "thinking_delta", content: "The user " });
+    t = applyEvent(t, { type: "thinking_delta", content: "wants X." });
+    expect(t.blocks).toHaveLength(1);
+    expect(t.blocks[0]).toMatchObject({ kind: "thinking", iteration: 1, text: "The user wants X.", streaming: true });
+
+    const liveId = t.blocks[0].id;
+    t = applyEvent(t, { type: "thinking", content: "The user wants X." });
+    expect(t.blocks).toHaveLength(1);
+    expect(t.blocks[0]).toMatchObject({ kind: "thinking", text: "The user wants X." });
+    expect((t.blocks[0] as { streaming?: boolean }).streaming).toBeFalsy();
+    expect(t.blocks[0].id).toBe(liveId);
+  });
+
+  it("grows the reply from content_delta events and settles it on final", () => {
+    let t = newAssistantTurn("a");
+    t = applyEvent(t, { type: "thinking_delta", content: "hmm" });
+    t = applyEvent(t, { type: "content_delta", content: "Hel" });
+    t = applyEvent(t, { type: "content_delta", content: "lo" });
+    expect(t.blocks.map((b) => b.kind)).toEqual(["thinking", "text"]);
+    expect(t.blocks[1]).toMatchObject({ text: "Hello", streaming: true });
+
+    // The full "thinking" event arrives after the content deltas and must still find its block.
+    t = applyEvent(t, { type: "thinking", content: "hmm" });
+    expect(t.blocks.map((b) => b.kind)).toEqual(["thinking", "text"]);
+
+    t = applyEvent(t, { type: "final", reply: "Hello" });
+    expect(t.blocks).toHaveLength(2);
+    expect(t.blocks[1]).toMatchObject({ kind: "text", text: "Hello" });
+    expect((t.blocks[1] as { streaming?: boolean }).streaming).toBeFalsy();
+    expect(t.status).toBe("done");
+  });
+
+  it("turns streamed reply text into a thought when tool calls follow", () => {
+    let t = newAssistantTurn("a");
+    t = applyEvent(t, { type: "content_delta", content: "Let me look." });
+    t = applyEvent(t, { type: "assistant_thought", content: "Let me look." });
+    t = applyEvent(t, { type: "tool_call", name: "read_file", arguments: { path: "x" } });
+    expect(t.blocks.map((b) => b.kind)).toEqual(["thought", "tool"]);
+    expect(t.blocks[0]).toMatchObject({ text: "Let me look." });
+  });
+
+  it("starts a fresh block for the next iteration's thinking", () => {
+    let t = newAssistantTurn("a");
+    t = applyEvent(t, { type: "thinking_delta", content: "one" });
+    t = applyEvent(t, { type: "thinking", content: "one" });
+    t = applyEvent(t, { type: "tool_call", name: "t", arguments: {} });
+    t = applyEvent(t, { type: "tool_result", name: "t", result: "r" });
+    t = applyEvent(t, { type: "thinking_delta", content: "two" });
+    expect(t.blocks.filter((b) => b.kind === "thinking").map((b) => (b as { text: string }).text)).toEqual(["one", "two"]);
+  });
+
+  it("stops marking text as live when the turn fails or errors", () => {
+    const live = applyEvent(newAssistantTurn("a"), { type: "content_delta", content: "par" });
+    for (const t of [failTurn(live, "gone"), applyEvent(live, { type: "error", message: "boom" })]) {
+      expect(t.status).toBe("error");
+      expect((t.blocks[0] as { streaming?: boolean }).streaming).toBeFalsy();
+      expect(t.blocks[0]).toMatchObject({ text: "par" });
+    }
+  });
+
+  it("gives the same result with or without deltas", () => {
+    const withDeltas = ["thinking_delta", "content_delta"].reduce((turn, type) => {
+      return applyEvent(turn, { type, content: "x" } as never);
+    }, newAssistantTurn("a"));
+    expect(withDeltas.blocks).toHaveLength(2);
+
+    const full = (deltas: boolean) => {
+      let t = newAssistantTurn("a");
+      if (deltas) {
+        t = applyEvent(t, { type: "thinking_delta", content: "why" });
+        t = applyEvent(t, { type: "content_delta", content: "answer" });
+      }
+      t = applyEvent(t, { type: "thinking", content: "why" });
+      t = applyEvent(t, { type: "final", reply: "answer" });
+      return t.blocks.map((b) => ({ ...b, id: "" }));
+    };
+    expect(full(true)).toEqual(full(false));
+  });
+});
+
 describe("turnsFromHistory", () => {
   it("rebuilds user turns, tool calls with results, and the final answer", () => {
     const turns = turnsFromHistory([

@@ -48,6 +48,9 @@ so no proxy is needed.
   into a turn, and how a saved session's history becomes a transcript again
   (tool calls included).
 - The open session is kept in the URL (`#/s/<id>`), so a reload comes back to it.
+- The UI asks `/chat/stream` for `stream_deltas`, so the model's thinking and
+  reply appear as they are generated, one piece at a time. `chatState.ts` grows
+  a live block from the pieces and swaps in the complete text when it arrives.
 - Sessions come from `GET /sessions`; opening one loads
   `GET /sessions/:id/history`; deleting one calls `DELETE /sessions/:id` after a
   confirmation.
@@ -56,8 +59,6 @@ so no proxy is needed.
 
 - **No Stop button yet.** Atlas can't cancel a turn that is already running, so
   the UI waits for it to finish rather than pretend to stop it.
-- Replies appear when the agent finishes a step, not word by word: Atlas streams
-  events (thinking, tool calls, results, final answer), not tokens.
 - Thinking isn't saved in a session's history, so it shows live but not when you
   reopen a session.
 - Assistant text supports code blocks and `inline code` only, not full Markdown.
