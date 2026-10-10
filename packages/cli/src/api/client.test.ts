@@ -425,3 +425,104 @@ describe("AtlasClient.deleteSession", () => {
     );
   });
 });
+
+describe("AtlasClient.listSessions", () => {
+  it("maps GET /sessions rows to SessionSummary objects", async () => {
+    await withServer(
+      (req, res) => {
+        expect(req.method).toBe("GET");
+        expect(req.url).toBe("/sessions");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            sessions: [
+              { id: "b", title: "second", message_count: 4, updated_at: "2026-10-10T12:00:00Z" },
+              { id: "a", title: "", message_count: 0, updated_at: "" },
+              { title: "no id, skipped" },
+            ],
+          })
+        );
+      },
+      async (baseUrl) => {
+        const client = new AtlasClient({ baseUrl });
+        await expect(client.listSessions()).resolves.toEqual([
+          { id: "b", title: "second", messageCount: 4, updatedAt: "2026-10-10T12:00:00Z" },
+          { id: "a", title: "", messageCount: 0, updatedAt: "" },
+        ]);
+      }
+    );
+  });
+
+  it("treats a body without a sessions array as an empty list", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end("{}");
+      },
+      async (baseUrl) => {
+        await expect(new AtlasClient({ baseUrl }).listSessions()).resolves.toEqual([]);
+      }
+    );
+  });
+
+  it("throws AtlasApiError on a non-2xx response (e.g. an older server)", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(404);
+        res.end();
+      },
+      async (baseUrl) => {
+        await expect(new AtlasClient({ baseUrl }).listSessions()).rejects.toBeInstanceOf(AtlasApiError);
+      }
+    );
+  });
+
+  it("throws AtlasConnectError when the server is unreachable", async () => {
+    await expect(new AtlasClient({ baseUrl: "http://127.0.0.1:1" }).listSessions()).rejects.toBeInstanceOf(
+      AtlasConnectError
+    );
+  });
+});
+
+describe("AtlasClient.info", () => {
+  it("returns the version, backend and model the server reports", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", version: "0.8.1", backend: "ollama", model: "qwen3:14b", extra: 1 }));
+      },
+      async (baseUrl) => {
+        await expect(new AtlasClient({ baseUrl }).info()).resolves.toEqual({
+          version: "0.8.1",
+          backend: "ollama",
+          model: "qwen3:14b",
+        });
+      }
+    );
+  });
+
+  it("returns an empty object for an older server that only says ok", async () => {
+    await withServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok" }));
+      },
+      async (baseUrl) => {
+        await expect(new AtlasClient({ baseUrl }).info()).resolves.toEqual({});
+      }
+    );
+  });
+
+  it("returns null when the server is down or not ok", async () => {
+    await expect(new AtlasClient({ baseUrl: "http://127.0.0.1:1" }).info()).resolves.toBeNull();
+    await withServer(
+      (_req, res) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "starting" }));
+      },
+      async (baseUrl) => {
+        await expect(new AtlasClient({ baseUrl }).info()).resolves.toBeNull();
+      }
+    );
+  });
+});

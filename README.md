@@ -324,9 +324,10 @@ unrelated to CMake.
   styled after tools like GitHub Copilot CLI: a streaming REPL over
   `POST /chat/stream`. The first client built against this API; see its
   README for setup and current limitations.
-- **AtlasUI** - a React web client (chat with live thinking and tool calls,
-  plus a sessions sidebar). Work in progress, tracked in #55: the backend
-  side (`GET /sessions`, serving the built UI at `/ui/`) is in place.
+- **[AtlasUI](packages/ui/README.md)** - a React web client: chat with live
+  thinking and tool calls, plus a sessions sidebar. Build it
+  (`cd packages/ui && npm ci && npm run build`), start Atlas from the repo
+  root, and open `http://127.0.0.1:8080/ui/`. Tracked in #55.
 
 ## Notes / known limitations
 

@@ -1,0 +1,39 @@
+name: UI
+
+# Not path-filtered, for the same reason cli-ci.yml isn't (see the comment
+# there): a workflow that never triggers leaves a check "Expected" forever.
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  ui-build-and-test:
+    # Distinct display name: branch protection lists checks by this name alone.
+    name: UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/ui
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: packages/ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
