@@ -43,8 +43,14 @@ The comparison is only meaningful if both servers are configured alike:
   without spilling layers to the CPU, which would wreck the numbers. Run the
   two benchmarks one after the other and unload the first (step 4). Also close
   anything else that uses the GPU heavily.
-- **A warmed-up run:** the script does one untimed warm-up per backend and
-  reports the median of the timed runs.
+- **A warmed-up run, with a cold prompt each time:** the script does one
+  untimed warm-up per backend and reports the median of the timed runs. Each
+  timed run gets a throwaway id at the start of its prompt, because both
+  servers cache the previous prompt and skip re-processing a shared prefix.
+  Without that, repeated identical prompts show near-zero prefill after the
+  first run (a first attempt reported ~69,000 tok/s that way) and the median
+  describes the cache, not the engine. `--reuse-cache` turns this off if you
+  want to measure the cached case separately.
 
 ## Step 1: find the exact GGUF Ollama uses
 
@@ -130,7 +136,9 @@ every individual run and the server versions.
 
 - *TTFT*: wall-clock seconds from sending the request to the first streamed
   token. Dominated by prompt processing for the long prompt.
-- *prefill tok/s*: prompt-processing speed, as reported by the server.
+- *prefill tok/s*: prompt-processing speed, as reported by the server. Only
+  trust it for the long prompt: with a ~30-token prompt it is dominated by
+  fixed overhead and is not comparable.
 - *decode tok/s (server)*: generation speed as the server measures it. This is
   the headline number.
 - *decode tok/s (wall)*: the same thing measured by the client's clock, as a

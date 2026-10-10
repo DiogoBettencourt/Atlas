@@ -28,6 +28,7 @@ import platform
 import statistics
 import sys
 import time
+import uuid
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -219,6 +220,20 @@ def fmt(value, digits=1):
     return "-" if value is None else f"{value:.{digits}f}"
 
 
+def unique_prompt(prompt: str, args) -> str:
+    """Prefix a throwaway id so a server's prompt cache can't reuse an earlier run's work.
+
+    Both Ollama and llama-server remember the previous prompt and skip
+    re-processing a shared prefix. With identical prompts every run after the
+    first would show near-zero prefill time, and the median would report that
+    instead of real prompt-processing speed. The id goes at the very start so
+    nothing after it can match. Use --reuse-cache to measure the cached case.
+    """
+    if args.reuse_cache:
+        return prompt
+    return f"[request {uuid.uuid4().hex[:8]}]\n{prompt}"
+
+
 def benchmark(label: str, runner, args) -> list[dict]:
     rows = []
     print(f"\n== {label} ==", file=sys.stderr)
@@ -227,7 +242,7 @@ def benchmark(label: str, runner, args) -> list[dict]:
     for name, prompt in PROMPTS:
         runs = []
         for i in range(args.runs):
-            result = with_wall_decode(runner(args, prompt))
+            result = with_wall_decode(runner(args, unique_prompt(prompt, args)))
             runs.append(result)
             print(
                 f"  {name} run {i + 1}/{args.runs}: ttft {result['ttft_s']:.2f}s, "
@@ -275,6 +290,9 @@ def parse_args(argv=None):
     p.add_argument("--runs", type=int, default=3, help="timed runs per prompt (default 3)")
     p.add_argument("--max-tokens", type=int, default=256, help="generation cap per run (default 256)")
     p.add_argument("--ctx", type=int, default=8192, help="context size sent to Ollama; start llama-server with the same -c")
+    p.add_argument("--reuse-cache", action="store_true",
+                   help="send identical prompts every run so the server's prompt cache is used (default: unique prompts, "
+                        "which measures real prefill speed)")
     p.add_argument("--no-think", action="store_true", help="ask both servers to disable reasoning output (best effort)")
     p.add_argument("--output", help="also write raw results to this JSON file")
     p.add_argument("--combine", nargs="+", metavar="FILE",
@@ -341,7 +359,8 @@ def main(argv=None) -> int:
     print(markdown_table(rows))
     print(
         f"\n_median of {args.runs} runs, temperature 0, max {args.max_tokens} tokens, ctx {args.ctx}"
-        f"{', thinking disabled' if args.no_think else ''}_"
+        f"{', thinking disabled' if args.no_think else ''}"
+        f"{', prompt cache allowed' if args.reuse_cache else ', unique prompts (cold prefill)'}_"
     )
 
     if args.output:
