@@ -26,19 +26,18 @@ jobs:
         run: cmake --build build --config Release -j
 
       - name: Test
+        shell: bash
         working-directory: build
-        run: ctest --output-on-failure --build-config Release
+        run: ctest --output-on-failure --build-config Release 2>&1 | tee ctest.log
 
-      # The job log is awkward to get at; this puts the failing tests' own
-      # output in the check's annotations, where it shows on the PR.
+      # The job log is awkward to get at; this puts the lines that say what
+      # failed in the check's annotations, where they show on the PR.
       - name: Show failing tests
         if: failure()
         shell: bash
         working-directory: build
         run: |
-          ctest --rerun-failed --output-on-failure --build-config Release > ctest-failed.log 2>&1 || true
-          cat ctest-failed.log
-          msg=$(tail -c 3500 ctest-failed.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          msg=$(grep -E "FAIL|Failed|\*\*\*|Errors while" ctest.log | tail -c 3500 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=Failing test output::${msg}"
 
   # Branch protection's "required status checks" has to name every leg of

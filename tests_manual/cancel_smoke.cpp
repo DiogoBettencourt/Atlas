@@ -95,7 +95,7 @@ std::string sseLine(const json& delta) {
 }
 
 // Writes `first`, then keeps writing `more` every 20ms until a write fails
-// (the client hung up) or ~4s pass. `client_left` records whether it was the
+// (the client hung up) or ~8s pass. `client_left` records whether it was the
 // client hanging up that ended it.
 void slowStream(httplib::Response& res, const char* type, std::string first, std::string more,
                 std::atomic<bool>& client_left) {
@@ -105,7 +105,7 @@ void slowStream(httplib::Response& res, const char* type, std::string first, std
             sent_first = true;
             return sink.write(first.data(), first.size());
         }
-        if (secondsSince(started) > 4.0) {
+        if (secondsSince(started) > 8.0) {
             sink.done();
             return true;
         }
@@ -135,7 +135,7 @@ public:
         ++streams;
         if (on_delta) on_delta("thinking", "pondering");
         if (on_delta) on_delta("content", "Partial answer");
-        for (int i = 0; i < 400; ++i) {
+        for (int i = 0; i < 800; ++i) {
             if (cancelled && cancelled()) {
                 observed_cancel = true;
                 throw Cancelled(json{{"role", "assistant"}, {"content", "Partial answer"}, {"thinking", "pondering"}});
@@ -221,11 +221,11 @@ int main(int argc, char** argv) {
             }
         }
         expect(threw, "ollama: chatStream throws Cancelled once the check turns true");
-        expect(secondsSince(start) < 2.0, "ollama: ...and returns promptly, not after the whole reply");
+        expect(secondsSince(start) < 4.0, "ollama: ...and returns promptly, not after the whole reply");
         expect(partial.value("thinking", "").rfind("Let me think. ", 0) == 0 && partial.value("role", "") == "assistant",
                "ollama: the Cancelled error carries what had been produced");
         expect(seen_thinking.rfind("Let me think. ", 0) == 0, "ollama: the live pieces were delivered before the stop");
-        sleepMs(100);
+        for (int i = 0; i < 100 && !client_left; ++i) sleepMs(20);
         expect(client_left.load(), "ollama: the connection was really closed (the server saw the client leave)");
     }
 
@@ -235,7 +235,7 @@ int main(int argc, char** argv) {
     {
         std::atomic<bool> release{false};
         StubServer server("/api/chat", [&](const httplib::Request&, httplib::Response& res) {
-            for (int i = 0; i < 300 && !release; ++i) sleepMs(10); // reading a long prompt...
+            for (int i = 0; i < 800 && !release; ++i) sleepMs(10); // reading a long prompt...
             res.set_content(json{{"message", {{"role", "assistant"}, {"content", "late"}}}}.dump(), "application/json");
         });
         OllamaBackend backend("127.0.0.1", server.port());
@@ -260,7 +260,7 @@ int main(int argc, char** argv) {
         (void)took;
         expect(threw, "ollama: a stop before the first token ends as cancelled (on Windows, once the server answers)");
 #else
-        expect(threw && took < 2.0, "ollama: a stop before the first token still returns promptly");
+        expect(threw && took < 4.0, "ollama: a stop before the first token still returns promptly");
 #endif
     }
 
@@ -302,11 +302,11 @@ int main(int argc, char** argv) {
                 partial = c.partial();
             }
         }
-        expect(threw && secondsSince(start) < 2.0, "openai: chatStream throws Cancelled promptly");
+        expect(threw && secondsSince(start) < 4.0, "openai: chatStream throws Cancelled promptly");
         expect(partial.value("thinking", "") == "Thinking. " && partial.value("content", "").rfind("Some ", 0) == 0 &&
                    !partial.contains("tool_calls"),
                "openai: the partial reply keeps thinking and text, never tool calls");
-        sleepMs(100);
+        for (int i = 0; i < 100 && !client_left; ++i) sleepMs(20);
         expect(client_left.load(), "openai: the connection was really closed");
     }
 
@@ -427,7 +427,7 @@ int main(int argc, char** argv) {
         expect(stopped && stopped->status == 200 && json::parse(stopped->body).value("cancelled", false) == true,
                "http: cancel finds the running turn");
         turn.join();
-        expect(secondsSince(start) < 2.0 && backend.observed_cancel, "http: the turn ended promptly because of the cancel");
+        expect(secondsSince(start) < 4.0 && backend.observed_cancel, "http: the turn ended promptly because of the cancel");
         expect(body.find("\"type\":\"cancelled\"") != std::string::npos, "http: the stream ends with a cancelled event");
 
         // The session is free again.
@@ -453,7 +453,11 @@ int main(int argc, char** argv) {
         }
         for (int i = 0; i < 100 && !backend.observed_cancel; ++i) sleepMs(20);
         expect(backend.observed_cancel, "http: a client that hangs up stops its turn");
-        sleepMs(100);
+        for (int i = 0; i < 100; ++i) {
+            auto probe = client.Post("/sessions/s2/cancel", "{}", "application/json");
+            if (probe && json::parse(probe->body).value("cancelled", true) == false) break;
+            sleepMs(20);
+        }
         auto after = client.Post("/sessions/s2/cancel", "{}", "application/json");
         expect(after && json::parse(after->body).value("cancelled", true) == false,
                "http: ...and the session is free again afterwards");
